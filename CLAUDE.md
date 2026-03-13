@@ -86,3 +86,22 @@ When creating or editing `.claude/skills/*/SKILL.md` files:
   - Bad: `description: >-` followed by indented lines
 - **Python templates in skills:** Add `# noqa: F401` to imports that are
   only used in commented-out example code, so ruff does not remove them.
+
+## Testing Action Workflows
+
+When modifying `.github/workflows/` files, use the **test-action** skill to validate changes before pushing:
+
+```bash
+# Test a single workflow
+/test-action pytest
+
+# Test all workflows
+/test-action all
+
+# Test and wait for results
+/test-action pytest --wait
+```
+
+The test-action skill triggers workflows on the isolated test-org repository (`ashokponkumar-test-org/torch-spyre`), allowing you to safely validate workflow changes without affecting the main repository.
+
+See `.claude/skills/test-action-changes/SKILL.md` for full documentation.
