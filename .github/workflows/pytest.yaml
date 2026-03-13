@@ -1,4 +1,4 @@
-name: PyTorch Tests
+name: Run Tests
 
 on:
   workflow_dispatch:
@@ -7,18 +7,41 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  checks: write
+
 jobs:
-  pytorch-tests:
+  test:
+    name: Run unit tests
     runs-on: ashok-test-org-aiu-x86-64-arc-runner-set
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Print environment info
         run: |
-          python --version
-          python -m pip install --upgrade pip
-          pip install pytest
+          echo "Python version:"
+          python3 --version
+          echo "Pip version:"
+          python3 -m pip --version
+          echo "Working directory:"
+          pwd
 
-      - name: Run PyTorch tests
+      - name: Install package with test dependencies
         run: |
-          pytest tests/ -v
+          python3 -m pip install --upgrade pip
+          pip install -e . --no-deps --no-build-isolation -v
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --tb=short
