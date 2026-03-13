@@ -2,6 +2,8 @@ name: Actions Runner Controller Demo
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [cicd-experiments]
 
 jobs:
   Explore-GitHub-Actions:
