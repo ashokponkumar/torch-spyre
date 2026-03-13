@@ -20,7 +20,7 @@ permissions:
 jobs:
   tests:
     name: pytest
-    runs-on: self-hosted
+    runs-on: ashok-aiu-x86-64-arc-runner-set
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
