@@ -24,6 +24,21 @@ jobs:
     name: Run unit tests
     runs-on: ashok-test-org-aiu-x86-64-arc-runner-set
     timeout-minutes: 30
+    env:
+      PATH: /dev/shm/torch-spyre-venv/bin:/dev/shm/.local/bin:/dev/shm/bin:/opt/rh/gcc-toolset-14/root/usr/bin:/opt/ibm/spyre/tvm/bin:/opt/ibm/spyre/runtime/bin:/opt/ibm/spyre/deeptools/bin:/opt/ibm/spyre/senlib/bin:/opt/ibm/spyre/sentinyexec/bin:/usr/lib64/ccache:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      LD_LIBRARY_PATH: /opt/rh/gcc-toolset-14/root/usr/lib64:/opt/rh/gcc-toolset-14/root/usr/lib:/opt/ibm/spyre/tvm/lib:/opt/ibm/spyre/runtime/lib:/opt/ibm/spyre/deeptools/lib:/opt/ibm/spyre/senlib/lib:/opt/ibm/spyre/sentinyexec/lib
+      SENDNN_INSTALL_DIR: /opt/ibm/spyre/runtime
+      SEN_COMMON_HEADERS: /opt/ibm/spyre/runtime/include
+      DEEPTOOLS_INSTALL_DIR: /opt/ibm/spyre/deeptools
+      SENLIB_INSTALL_DIR: /opt/ibm/spyre/senlib
+      TVM_INSTALL_DIR: /opt/ibm/spyre/tvm
+      RUNTIME_INSTALL_DIR: /opt/ibm/spyre/runtime
+      FLEX_COMPUTE: SENTIENT
+      FLEX_DEVICE: PF
+      TOKENIZERS_PARALLELISM: 'false'
+      VIRTUAL_ENV: /dev/shm/torch-spyre-venv
+      HOME: /dev/shm
+      OMP_NUM_THREADS: '192'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
