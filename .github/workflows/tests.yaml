@@ -20,7 +20,7 @@ permissions:
 jobs:
   tests:
     name: pytest
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
