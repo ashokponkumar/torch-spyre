@@ -1,7 +1,7 @@
 name: Run Tests
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: null
   push:
     branches: [main]
   pull_request:
