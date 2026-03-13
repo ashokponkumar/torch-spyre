@@ -1,0 +1,28 @@
+name: PyTorch Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pytorch-tests:
+    runs-on: ashok-test-org-aiu-x86-64-arc-runner-set
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch pytest
+
+      - name: Run PyTorch tests
+        run: |
+          pytest tests/ -v
