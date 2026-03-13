@@ -13,15 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.14'
-
       - name: Install dependencies
         run: |
+          python --version
           python -m pip install --upgrade pip
-          pip install torch pytest
+          pip install pytest
 
       - name: Run PyTorch tests
         run: |
