@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: install-scipy
+  namespace: torch-spyre-cicd
+spec:
+  restartPolicy: Never
+  imagePullSecrets:
+    - name: wxpe-cicd-vllm-iccr-internal
+  containers:
+    - name: install
+      image: us.icr.io/wxpe-cicd-internal/amd64/torch-aiu-runtime-dev:latest
+      command:
+        - /bin/bash
+        - -c
+        - |
+          source /mnt/devwork/discovery/2026-03-27-discovery/workspace/venv/bin/activate
+          pip install --no-cache-dir scipy
+          python3 -c "import scipy; print(f'scipy {scipy.__version__} installed successfully')"
+      volumeMounts:
+        - name: devwork
+          mountPath: /mnt/devwork
+  volumes:
+    - name: devwork
+      persistentVolumeClaim:
+        claimName: my-dev-work-pvc

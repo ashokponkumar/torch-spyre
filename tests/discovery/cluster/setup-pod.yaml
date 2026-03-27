@@ -37,7 +37,7 @@ spec:
           source "${VENV}/bin/activate"
 
           # Install test dependencies
-          pip install --no-cache-dir pytest-forked pytest-timeout pyyaml expecttest hypothesis pydantic
+          pip install --no-cache-dir pytest-forked pytest-timeout pyyaml expecttest hypothesis pydantic scipy
 
           # Clone torch-spyre (shallow)
           if [ ! -d "${WORKSPACE}/torch-spyre" ]; then
