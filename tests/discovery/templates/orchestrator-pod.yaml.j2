@@ -1,0 +1,95 @@
+{# Orchestrator pod — runs on a regular worker node (no Spyre card needed).
+   Manages the Indexed Job, aggregates results, generates config. #}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: discovery-orchestrator-{{ run_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: discovery-orchestrator
+    discovery-run: "{{ run_id }}"
+spec:
+  restartPolicy: Never
+  serviceAccount: {{ service_account }}
+  nodeSelector:
+    node-role.kubernetes.io/worker: ""
+  imagePullSecrets:
+    - name: {{ image_pull_secret }}
+  initContainers:
+    - name: setup
+      image: {{ image }}
+      imagePullPolicy: Always
+      command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "=== Setting up orchestrator ==="
+
+          # Create venv with system packages
+          python3 -m venv /workspace/venv --system-site-packages
+          source /workspace/venv/bin/activate
+
+          # Install orchestrator dependencies
+          pip install --quiet pyyaml jinja2 kubernetes
+
+          # Clone torch-spyre (for discovery module)
+          git clone --depth 1 --branch {{ torch_spyre_branch }} {{ torch_spyre_repo }} /workspace/torch-spyre
+
+          # Clone PyTorch (for test file list verification)
+          git clone --depth 1 --branch {{ pytorch_branch }} {{ pytorch_repo }} /workspace/pytorch
+
+          echo "=== Setup complete ==="
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: devwork
+          mountPath: {{ pvc_mount_path }}
+  containers:
+    - name: orchestrator
+      image: {{ image }}
+      imagePullPolicy: Always
+      command:
+        - /bin/bash
+        - -c
+        - |
+          source /workspace/venv/bin/activate
+          cd /workspace/torch-spyre/tests
+          export PYTHONPATH=/workspace/torch-spyre/tests:$PYTHONPATH
+
+          python -m discovery.orchestrator \
+            --run-id "{{ run_id }}" \
+            --max-parallelism {{ max_parallelism }} \
+            --min-parallelism {{ min_parallelism }} \
+            --reserve {{ reserve_cards }} \
+            --namespace "{{ namespace }}" \
+            --pvc "{{ pvc }}" \
+            --image "{{ image }}" \
+            --pytorch-root /workspace/pytorch \
+            {% if baseline %}--baseline "{{ baseline }}" \{% endif %}
+            2>&1 | tee {{ pvc_mount_path }}/discovery/{{ run_id }}/orchestrator.log
+      env:
+        - name: RUN_ID
+          value: "{{ run_id }}"
+        - name: NAMESPACE
+          value: "{{ namespace }}"
+        - name: KUBERNETES_SERVICE_HOST
+          value: ""  # Use in-cluster config
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: devwork
+          mountPath: {{ pvc_mount_path }}
+  volumes:
+    - name: workspace
+      emptyDir: {}
+    - name: devwork
+      persistentVolumeClaim:
+        claimName: {{ pvc }}

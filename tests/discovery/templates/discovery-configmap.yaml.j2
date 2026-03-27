@@ -1,0 +1,16 @@
+{# ConfigMap holding discovery config and file manifest for the run. #}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discovery-config-{{ run_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: discovery
+    discovery-run: "{{ run_id }}"
+data:
+  discovery_config.yaml: |
+{{ discovery_config | indent(4, True) }}
+  file_manifest.json: |
+{{ file_manifest | indent(4, True) }}
+  run_params.json: |
+{{ run_params | indent(4, True) }}

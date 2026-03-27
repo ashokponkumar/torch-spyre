@@ -1,0 +1,93 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: discovery-single-test
+  namespace: torch-spyre-cicd
+  labels:
+    app: discovery
+    run-id: "2026-03-27-single-test"
+spec:
+  completions: 1
+  parallelism: 1
+  completionMode: Indexed
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app: discovery-worker
+        run-id: "2026-03-27-single-test"
+    spec:
+      restartPolicy: Never
+      schedulerName: spyre-scheduler
+      serviceAccountName: default
+      imagePullSecrets:
+        - name: wxpe-cicd-vllm-iccr-internal
+      containers:
+        - name: worker
+          image: us.icr.io/wxpe-cicd-internal/amd64/torch-aiu-runtime-dev:latest
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -lc
+            - |
+              set -euo pipefail
+
+              WORKSPACE=/mnt/devwork/discovery/2026-03-27-discovery/workspace
+              VENV="${WORKSPACE}/venv"
+
+              # Verify setup was done
+              if [ ! -f "${WORKSPACE}/.setup-done" ]; then
+                echo "ERROR: Setup not complete. Run discovery-setup pod first."
+                exit 1
+              fi
+
+              source "${VENV}/bin/activate"
+
+              export PYTORCH_ROOT="${WORKSPACE}/pytorch"
+              export TORCH_SPYRE_ROOT="${WORKSPACE}/torch-spyre"
+              export RUN_ID="2026-03-27-single-test"
+              export PER_TEST_TIMEOUT="300"
+              export POD_TIMEOUT="3600"
+
+              bash /mnt/config/runner.sh
+          env:
+            - name: FLEX_COMPUTE
+              value: "SENTIENT"
+            - name: FLEX_DEVICE
+              value: "PF"
+            - name: TOKENIZERS_PARALLELISM
+              value: "false"
+            - name: HOME
+              value: "/dev/shm"
+            - name: HF_HOME
+              value: "/dev/shm"
+          volumeMounts:
+            - name: devwork
+              mountPath: /mnt/devwork
+            - name: config
+              mountPath: /mnt/config
+              readOnly: true
+            - name: dev-shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              memory: "8Gi"
+              cpu: "2"
+              ibm.com/spyre_pf: "1"
+            limits:
+              memory: "32Gi"
+              cpu: "4"
+              ibm.com/spyre_pf: "1"
+      volumes:
+        - name: devwork
+          persistentVolumeClaim:
+            claimName: my-dev-work-pvc
+        - name: config
+          configMap:
+            name: discovery-config-2026-03-27
+            defaultMode: 0755
+        - name: dev-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi

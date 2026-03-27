@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: discovery-setup
+  namespace: torch-spyre-cicd
+  labels:
+    app: discovery
+    run-id: "2026-03-27-discovery"
+spec:
+  restartPolicy: Never
+  schedulerName: spyre-scheduler
+  serviceAccountName: default
+  imagePullSecrets:
+    - name: wxpe-cicd-vllm-iccr-internal
+  containers:
+    - name: setup
+      image: us.icr.io/wxpe-cicd-internal/amd64/torch-aiu-runtime-dev:latest
+      imagePullPolicy: Always
+      command:
+        - /bin/bash
+        - -lc
+        - |
+          set -ex
+
+          WORKSPACE=/mnt/devwork/discovery/2026-03-27-discovery/workspace
+          VENV="${WORKSPACE}/venv"
+
+          # Clean previous failed setup
+          rm -rf "${WORKSPACE}/.setup-done" "${WORKSPACE}/.setup-lock-dir"
+
+          mkdir -p "${WORKSPACE}"
+
+          # Create venv with system packages
+          if [ ! -d "${VENV}" ]; then
+            python3 -m venv --system-site-packages "${VENV}"
+          fi
+          source "${VENV}/bin/activate"
+
+          # Install test dependencies
+          pip install --no-cache-dir pytest-forked pytest-timeout pyyaml expecttest hypothesis pydantic
+
+          # Clone torch-spyre (shallow)
+          if [ ! -d "${WORKSPACE}/torch-spyre" ]; then
+            git clone --depth 1 https://github.com/torch-spyre/torch-spyre.git "${WORKSPACE}/torch-spyre"
+          fi
+
+          # Clone pytorch at matching version (shallow)
+          if [ ! -d "${WORKSPACE}/pytorch" ]; then
+            git clone --depth 1 --branch v2.10.0 https://github.com/pytorch/pytorch.git "${WORKSPACE}/pytorch"
+          fi
+
+          # Install build deps that torch-spyre needs (must be in the venv, not isolated)
+          pip install --no-cache-dir cmake ninja build setuptools wheel regex
+
+          # Build and install torch-spyre WITHOUT build isolation
+          # --no-build-isolation is required so the build can find sendnn from system packages
+          cd "${WORKSPACE}/torch-spyre"
+          pip install -e . --no-deps --no-build-isolation 2>&1
+
+          # Verify the install
+          python3 -c "import torch_spyre; print('torch_spyre imported successfully')"
+
+          touch "${WORKSPACE}/.setup-done"
+          echo "=== SETUP COMPLETE ==="
+          echo "Venv at: ${VENV}"
+          pip list | grep -iE "spyre|torch|pytest|expect|hypothesis|pydantic"
+      env:
+        - name: FLEX_COMPUTE
+          value: "SENTIENT"
+        - name: FLEX_DEVICE
+          value: "PF"
+        - name: HOME
+          value: "/dev/shm"
+      volumeMounts:
+        - name: devwork
+          mountPath: /mnt/devwork
+        - name: dev-shm
+          mountPath: /dev/shm
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "4"
+          ibm.com/spyre_pf: "1"
+        limits:
+          memory: "32Gi"
+          cpu: "8"
+          ibm.com/spyre_pf: "1"
+  volumes:
+    - name: devwork
+      persistentVolumeClaim:
+        claimName: my-dev-work-pvc
+    - name: dev-shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi

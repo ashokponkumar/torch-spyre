@@ -1,0 +1,374 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discovery-config-2026-03-27
+  namespace: torch-spyre-cicd
+  labels:
+    app: discovery
+    run-id: "2026-03-27-discovery"
+data:
+  runner.sh: |
+    #!/bin/bash
+    # Discovery worker runner — self-contained bash script
+    # Reads JOB_COMPLETION_INDEX, looks up test file, runs pytest, writes results to PVC.
+    set -euo pipefail
+
+    INDEX="${JOB_COMPLETION_INDEX:?JOB_COMPLETION_INDEX not set}"
+    RUN_ID="${RUN_ID:?RUN_ID not set}"
+    PYTORCH_ROOT="${PYTORCH_ROOT:-/workspace/pytorch}"
+    TORCH_SPYRE_ROOT="${TORCH_SPYRE_ROOT:-/workspace/torch-spyre}"
+    PER_TEST_TIMEOUT="${PER_TEST_TIMEOUT:-300}"
+    POD_TIMEOUT="${POD_TIMEOUT:-14400}"
+
+    RESULTS_DIR="/mnt/devwork/discovery/${RUN_ID}/workers/${INDEX}"
+    # Clean old results from any previous run at this index
+    rm -rf "${RESULTS_DIR}"
+    mkdir -p "${RESULTS_DIR}"
+
+    FILE_LIST="/mnt/config/file_list.txt"
+    TEST_FILE=$(sed -n "$((INDEX + 1))p" "${FILE_LIST}")
+
+    if [ -z "${TEST_FILE}" ]; then
+        echo "[Worker ${INDEX}] ERROR: No test file at index ${INDEX}"
+        echo "no_file" > "${RESULTS_DIR}/exitcode.txt"
+        touch "${RESULTS_DIR}/done.marker"
+        exit 1
+    fi
+
+    echo "[Worker ${INDEX}] Starting: ${TEST_FILE}"
+    echo "${TEST_FILE}" > "${RESULTS_DIR}/test_file.txt"
+    date -u +"%Y-%m-%dT%H:%M:%S+00:00" > "${RESULTS_DIR}/start_time.txt"
+
+    # Environment for Spyre upstream tests
+    export FLEX_COMPUTE=SENTIENT
+    export FLEX_DEVICE=PF
+    export TOKENIZERS_PARALLELISM=false
+    export PYTORCH_TESTING_DEVICE_ONLY_FOR=privateuse1
+    export TORCH_TEST_DEVICES="${TORCH_SPYRE_ROOT}/tests/spyre_test_base_common.py"
+    export PYTORCH_TEST_CONFIG="/mnt/config/discovery_config.yaml"
+    export PYTHONPATH="${TORCH_SPYRE_ROOT}/tests:${PYTORCH_ROOT}/test:${PYTHONPATH:-}"
+
+    TEST_PATH="${PYTORCH_ROOT}/test/${TEST_FILE}"
+
+    # Phase 1: Collect tests
+    echo "[Worker ${INDEX}] Phase 1: Collecting tests..."
+    timeout 120 python3 -m pytest --collect-only -q "${TEST_PATH}" \
+        > "${RESULTS_DIR}/collected.txt" 2>&1 || true
+    COLLECTED_COUNT=$(grep -c '::' "${RESULTS_DIR}/collected.txt" 2>/dev/null || echo "0")
+    echo "[Worker ${INDEX}] Collected ${COLLECTED_COUNT} tests"
+
+    # Phase 2: Run tests
+    echo "[Worker ${INDEX}] Phase 2: Running tests..."
+    set +e
+    timeout "${POD_TIMEOUT}" python3 -m pytest \
+        "${TEST_PATH}" \
+        --forked \
+        --junitxml="${RESULTS_DIR}/results.xml" \
+        --timeout="${PER_TEST_TIMEOUT}" \
+        -v \
+        --tb=short \
+        > "${RESULTS_DIR}/stdout.log" 2> "${RESULTS_DIR}/stderr.log"
+    EXIT_CODE=$?
+    set -e
+
+    echo "${EXIT_CODE}" > "${RESULTS_DIR}/exitcode.txt"
+
+    SIGNAL=""
+    if [ "${EXIT_CODE}" -eq 139 ]; then SIGNAL="SIGSEGV";
+    elif [ "${EXIT_CODE}" -eq 137 ]; then SIGNAL="OOM_KILLED";
+    elif [ "${EXIT_CODE}" -eq 124 ]; then SIGNAL="TIMEOUT";
+    fi
+
+    # Phase 3: Summary
+    echo "[Worker ${INDEX}] Phase 3: Writing summary..."
+    TOTAL=0; PASSED=0; FAILED=0; ERRORS=0; SKIPPED=0; DURATION="0.0"
+    if [ -f "${RESULTS_DIR}/results.xml" ]; then
+        TOTAL=$(grep -oP 'tests="\K[0-9]+' "${RESULTS_DIR}/results.xml" | head -1 || echo 0)
+        FAILED=$(grep -oP 'failures="\K[0-9]+' "${RESULTS_DIR}/results.xml" | head -1 || echo 0)
+        ERRORS=$(grep -oP 'errors="\K[0-9]+' "${RESULTS_DIR}/results.xml" | head -1 || echo 0)
+        SKIPPED=$(grep -oP 'skipped="\K[0-9]+' "${RESULTS_DIR}/results.xml" | head -1 || echo 0)
+        DURATION=$(grep -oP 'time="\K[0-9.]+' "${RESULTS_DIR}/results.xml" | head -1 | tr -d '\n' || echo "0.0")
+        PASSED=$((TOTAL - FAILED - ERRORS - SKIPPED))
+        [ "${PASSED}" -lt 0 ] && PASSED=0
+    fi
+
+    END_TIME=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
+    START_TIME=$(cat "${RESULTS_DIR}/start_time.txt")
+
+    cat > "${RESULTS_DIR}/summary.json" << SUMMARY_EOF
+    {
+      "file": "${TEST_FILE}",
+      "index": ${INDEX},
+      "start_time": "${START_TIME}",
+      "end_time": "${END_TIME}",
+      "exit_code": ${EXIT_CODE},
+      "signal": ${SIGNAL:+"\"${SIGNAL}\""}${SIGNAL:-null},
+      "total": ${TOTAL},
+      "passed": ${PASSED},
+      "failed": ${FAILED},
+      "errors": ${ERRORS},
+      "skipped": ${SKIPPED},
+      "duration": ${DURATION}
+    }
+    SUMMARY_EOF
+
+    touch "${RESULTS_DIR}/done.marker"
+    echo "[Worker ${INDEX}] Done: ${TEST_FILE} — exit=${EXIT_CODE} passed=${PASSED} failed=${FAILED} errors=${ERRORS} skipped=${SKIPPED}"
+
+  file_list.txt: |
+    test_binary_ufuncs.py
+    test_complex.py
+    test_dlpack.py
+    test_foreach.py
+    test_indexing.py
+    test_linalg.py
+    test_masked.py
+    test_namedtensor.py
+    test_nn.py
+    test_ops.py
+    test_ops_fwd_gradients.py
+    test_ops_gradients.py
+    test_ops_jit.py
+    test_proxy_tensor.py
+    test_reductions.py
+    test_scatter_gather_ops.py
+    test_shape_ops.py
+    test_sort_and_select.py
+    test_sparse.py
+    test_sparse_csr.py
+    test_spectral_ops.py
+    test_tensor_creation_ops.py
+    test_torch.py
+    test_type_hints.py
+    test_type_promotion.py
+    test_unary_ufuncs.py
+    test_view_ops.py
+    test_vmap.py
+    test_autograd.py
+    test_comparison_utils.py
+    test_decomp.py
+    test_expanded_weights.py
+    test_fake_tensor.py
+    test_functional_autograd_benchmark.py
+    test_fx_experimental.py
+    test_fx_passes.py
+    test_jit.py
+    test_jit_fuser_te.py
+    test_jit_llga_fuser.py
+    test_linalg_grad.py
+    test_meta.py
+    test_mkldnn.py
+    test_modules.py
+    test_nestedtensor.py
+    test_overrides.py
+    test_prims.py
+    test_quantization.py
+    test_schema_check.py
+    test_sparse_semi_structured.py
+    test_stateless.py
+    test_subclass.py
+    test_testing.py
+    test_transformers.py
+    test_utils.py
+    test_xla_sharding.py
+    functorch/test_aotdispatch.py
+    functorch/test_control_flow.py
+    functorch/test_eager_transforms.py
+    functorch/test_ops.py
+    functorch/test_vmap.py
+    inductor/test_decomp.py
+    inductor/test_torchinductor.py
+    inductor/test_torchinductor_opinfo.py
+
+  discovery_config.yaml: |
+    test_suite_config:
+      files:
+        - path: "${PYTORCH}/test/test_binary_ufuncs.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_complex.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_dlpack.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_foreach.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_indexing.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_linalg.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_masked.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_namedtensor.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_nn.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_ops_fwd_gradients.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_ops_gradients.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_ops_jit.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_proxy_tensor.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_reductions.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_scatter_gather_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_shape_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_sort_and_select.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_sparse.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_sparse_csr.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_spectral_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_tensor_creation_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_torch.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_type_hints.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_type_promotion.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_unary_ufuncs.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_view_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_vmap.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_autograd.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_comparison_utils.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_decomp.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_expanded_weights.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_fake_tensor.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_functional_autograd_benchmark.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_fx_experimental.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_fx_passes.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_jit.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_jit_fuser_te.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_jit_llga_fuser.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_linalg_grad.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_meta.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_mkldnn.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_modules.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_nestedtensor.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_overrides.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_prims.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_quantization.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_schema_check.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_sparse_semi_structured.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_stateless.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_subclass.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_testing.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_transformers.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_utils.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/test_xla_sharding.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/functorch/test_aotdispatch.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/functorch/test_control_flow.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/functorch/test_eager_transforms.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/functorch/test_ops.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/functorch/test_vmap.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/inductor/test_decomp.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/inductor/test_torchinductor.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []
+        - path: "${PYTORCH}/test/inductor/test_torchinductor_opinfo.py"
+          unlisted_test_mode: "mandatory_success"
+          tests: []

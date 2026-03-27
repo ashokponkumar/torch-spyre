@@ -122,6 +122,7 @@ class TestEntry(BaseModel):
     names: List[str]
     mode: str = MODE_MANDATORY_SUCCESS
     tags: List[str] = []
+    description: Optional[str] = None
     edits: TestEdits = TestEdits()
 
     @field_validator("names", mode="before")

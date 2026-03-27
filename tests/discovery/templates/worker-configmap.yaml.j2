@@ -1,0 +1,12 @@
+{# ConfigMap for per-worker configuration overrides (optional). #}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: discovery-worker-config-{{ run_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: discovery-worker
+    discovery-run: "{{ run_id }}"
+data:
+  worker_config.json: |
+{{ worker_config | indent(4, True) }}

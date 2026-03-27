@@ -1,0 +1,128 @@
+{# Indexed Job for worker pods — each gets 1 Spyre card and runs a single test file. #}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: discovery-workers-{{ run_id }}
+  namespace: {{ namespace }}
+  labels:
+    app: discovery-worker
+    discovery-run: "{{ run_id }}"
+spec:
+  completionMode: Indexed
+  completions: {{ num_files }}
+  parallelism: {{ parallelism }}
+  backoffLimit: {{ backoff_limit }}
+  ttlSecondsAfterFinished: 86400  {# Clean up 24h after completion #}
+  template:
+    metadata:
+      labels:
+        app: discovery-worker
+        discovery-run: "{{ run_id }}"
+    spec:
+      restartPolicy: Never
+      schedulerName: {{ scheduler }}
+      serviceAccount: {{ service_account }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      imagePullSecrets:
+        - name: {{ image_pull_secret }}
+      initContainers:
+        - name: setup
+          image: {{ image }}
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "=== Worker setup: index=$JOB_COMPLETION_INDEX ==="
+
+              # Create venv with system packages
+              python3 -m venv /workspace/venv --system-site-packages
+              source /workspace/venv/bin/activate
+
+              # Install test dependencies
+              pip install --quiet pytest-forked pytest-timeout pyyaml
+
+              # Clone torch-spyre
+              git clone --depth 1 --branch {{ torch_spyre_branch }} {{ torch_spyre_repo }} /workspace/torch-spyre
+
+              # Clone PyTorch
+              git clone --depth 1 --branch {{ pytorch_branch }} {{ pytorch_repo }} /workspace/pytorch
+
+              # Install torch-spyre
+              cd /workspace/torch-spyre
+              pip install -e . --no-deps --no-build-isolation --quiet
+
+              echo "=== Worker setup complete ==="
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: devwork
+              mountPath: {{ pvc_mount_path }}
+      containers:
+        - name: runner
+          image: {{ image }}
+          imagePullPolicy: Always
+          command:
+            - /bin/bash
+            - -c
+            - |
+              source /workspace/venv/bin/activate
+              cd /workspace/torch-spyre/tests
+              export PYTHONPATH=/workspace/torch-spyre/tests:$PYTHONPATH
+              export PYTORCH_ROOT=/workspace/pytorch
+
+              python -m discovery.runner \
+                --run-id "{{ run_id }}" \
+                --index "$JOB_COMPLETION_INDEX" \
+                --pytorch-root /workspace/pytorch
+          env:
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+            - name: FLEX_COMPUTE
+              value: SENTIENT
+            - name: FLEX_DEVICE
+              value: PF
+            - name: TOKENIZERS_PARALLELISM
+              value: "false"
+            - name: PYTORCH_TESTING_DEVICE_ONLY_FOR
+              value: privateuse1
+            - name: TORCH_TEST_DEVICES
+              value: privateuse1
+            - name: POD_TIMEOUT
+              value: "{{ per_pod_timeout }}"
+            - name: HOME
+              value: /workspace
+          resources:
+            requests:
+              memory: {{ default_memory_request }}
+              ibm.com/spyre_pf: "1"
+            limits:
+              memory: {{ default_memory_limit }}
+              ibm.com/spyre_pf: "1"
+          volumeMounts:
+            - name: dev-shm
+              mountPath: /dev/shm
+            - name: workspace
+              mountPath: /workspace
+            - name: devwork
+              mountPath: {{ pvc_mount_path }}
+      volumes:
+        - name: dev-shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Gi
+        - name: workspace
+          emptyDir: {}
+        - name: devwork
+          persistentVolumeClaim:
+            claimName: {{ pvc }}
