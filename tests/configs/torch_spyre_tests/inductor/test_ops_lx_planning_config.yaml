@@ -13,3 +13,15 @@ test_suite_config:
       # than enumerating each LxPlanningTwoOpPointwiseAdditionTest:: and
       # LxPlanningTwoOpReductionTest:: test name explicitly.
       unlisted_test_mode: mandatory_success
+      tests:
+        - names:
+            # fp32 reduction tests failing because dxp_standalone --bundle aborts on fp32
+            # reduction ops. Root cause: PR #2051 reverted fp32 reduction support (#1663),
+            # but PR #1711 added these tests as mandatory_success before the revert.
+            # Tracked in: https://github.com/torch-spyre/torch-spyre/issues/2054
+            - LxPlanningTwoOpPointwiseAdditionTest::test_reduce_edge_multidim_keepdim0_sum_large_2d_dim_01_all_lx_planning_pointwise
+            - LxPlanningTwoOpPointwiseAdditionTest::test_reduce_edge_multidim_keepdim1_sum_large_2d_dim_01_all_lx_planning_pointwise
+            - LxPlanningTwoOpReductionTest::test_activation_cls_gelu_fp16_lx_planning_reduction
+            - LxPlanningTwoOpReductionTest::test_reduce_edge_multidim_keepdim0_sum_large_2d_dim_01_all_lx_planning_reduction
+            - LxPlanningTwoOpReductionTest::test_reduce_edge_multidim_keepdim1_sum_large_2d_dim_01_all_lx_planning_reduction
+          mode: xfail
