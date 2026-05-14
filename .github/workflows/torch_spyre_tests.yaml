@@ -20,6 +20,7 @@ defaults:
 permissions:
   contents: read
   checks: write
+  actions: read
 
 jobs:
   test:
@@ -187,9 +188,17 @@ jobs:
     if: always()
     steps:
       - name: Check all suites passed
-        run: |-
-          if [[ "${{ needs.test.result }}" != "success" ]]; then
-            echo "One or more test suites failed."
-            exit 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ needs.test.result }}" == "success" ]]; then
+            echo "All test suites passed."
+            exit 0
           fi
-          echo "All test suites passed."
+          # Fetch job results for this run and list which suites failed.
+          failed=$(gh api \
+            "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join("\n")')
+          echo "The following test suite(s) failed:"
+          echo "$failed"
+          exit 1
