@@ -23,7 +23,12 @@ from utils_inductor import (
 
 
 class TestOps(unittest.TestCase, metaclass=ParameterizedTestMeta):
-    torch.manual_seed(0xAFFE)
+    torch.manual_seed(0xAFFE)  # seeds cached_randn/cached_xavier calls in PARAMS below
+
+    def setUp(self):
+        super().setUp()
+        torch.manual_seed(0xAFFE)
+
     # Define parameter sets for each base test method
     # If parameterized, the base test method will not be invoked
     # The test methods that are not parameterized will be invoked
@@ -72,20 +77,18 @@ class TestOps(unittest.TestCase, metaclass=ParameterizedTestMeta):
                     cached_randn((2, 67, 256), dtype=torch.float16).to("spyre"),
                     cached_randn((2, 256, 128), dtype=torch.float16).to("spyre"),
                 ),
-                # TODO(aviros): Fails on codegen
-                # "3d_3d_bcast": (
-                #     cached_randn((4, 67, 256), dtype=torch.float16).to("spyre"),
-                #     cached_randn((1, 256, 128), dtype=torch.float16).to("spyre"),
-                # ),
+                "3d_3d_bcast": (
+                    cached_randn((4, 67, 256), dtype=torch.float16).to("spyre"),
+                    cached_randn((1, 256, 128), dtype=torch.float16).to("spyre"),
+                ),
                 "4d_4d": (
                     cached_randn((3, 17, 128, 256), dtype=torch.float16).to("spyre"),
                     cached_randn((3, 17, 256, 128), dtype=torch.float16).to("spyre"),
                 ),
-                # TODO(aviros): Fails on codegen
-                # "4d_4d_bcast": (
-                #     cached_randn((3, 1, 128, 256), dtype=torch.float16).to("spyre"),
-                #     cached_randn((1, 17, 256, 128), dtype=torch.float16).to("spyre"),
-                # ),
+                "4d_4d_bcast": (
+                    cached_randn((3, 1, 128, 256), dtype=torch.float16).to("spyre"),
+                    cached_randn((1, 17, 256, 128), dtype=torch.float16).to("spyre"),
+                ),
             },
         },
     }
@@ -158,12 +161,63 @@ class TestOps(unittest.TestCase, metaclass=ParameterizedTestMeta):
         inductor_graph_str = normalize_gm(
             backend.inductor_graphs[0].print_readable(print_output=False)
         )
-        assert "aten.bmm.default" in inductor_graph_str, (
-            "Expected aten.bmm.default after unflatten_mm_to_bmm pass"
+        has_batched_matmul = (
+            "aten.bmm.default" in inductor_graph_str
+            or "spyre.batched_matmul" in inductor_graph_str
+        )
+        assert has_batched_matmul, (
+            "Expected aten.bmm.default or spyre.batched_matmul after passes"
         )
         assert "aten.mm.default" not in inductor_graph_str, (
-            "aten.mm.default should be replaced by bmm after unflatten pass"
+            "aten.mm.default should be replaced by bmm/batched_matmul after passes"
         )
+
+    def test_mixed_device_seq(self):
+        model = torch.compile(torch.sin)
+        cpu_1 = torch._inductor.utils.get_code(model, torch.randn(5))[0]
+
+        model = torch.compile(torch.sin)
+        spyre_1 = torch._inductor.utils.get_code(model, torch.randn(5, device="spyre"))[
+            0
+        ]
+
+        torch._dynamo.reset()
+        model = torch.compile(torch.sin)
+        cpu_2 = torch._inductor.utils.get_code(model, torch.randn(5))[0]
+
+        assert cpu_1.split("\n", 1)[1] == cpu_2.split("\n", 1)[1], (
+            "CPU graph should be the same across compilations"
+        )
+        assert spyre_1 != cpu_1, "SPYRE graph should differ from CPU graph"
+
+    def test_concretize_index_with_symbolic_shapes(self):
+        """
+        Test that concretize_index handles unconvertible symbolic expressions.
+
+        Regression test for: "TypeError: Cannot convert symbols to int"
+        that occurred in index_copy operations with symbolic shapes.
+        """
+        from unittest.mock import patch
+        import sympy
+        from torch_spyre._inductor.pass_utils import concretize_index
+
+        # Create symbolic variables
+        x = sympy.Symbol("x")  # Loop variable
+        tmp0 = sympy.Symbol("tmp0")  # Unconvertible symbol
+
+        # Create expression: x + tmp0
+        index = x + tmp0
+        loop_vars = {x}
+
+        # Mock size_hint to raise TypeError for tmp0
+        with patch("torch_spyre._inductor.pass_utils.V") as mock_v:
+            mock_v.graph.sizevars.size_hint.side_effect = TypeError(
+                "Cannot convert symbols to int"
+            )
+
+            # Should NOT raise, should return original index
+            result = concretize_index(index, loop_vars)
+            assert result == index, f"Expected {index}, got {result}"
 
 
 if __name__ == "__main__":

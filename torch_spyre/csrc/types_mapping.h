@@ -21,7 +21,12 @@
 #include <module.h>
 #include <util/sendefs.h>
 
+#ifdef USE_FLEX_NAMESPACE
+#include <flex/datatype/flex_datatype.hpp>
+namespace sendnn = flex;
+#else
 #include <sendnn/tensor/sendatatype.hpp>
+#endif
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -70,7 +75,7 @@ inline std::pair<DataFormats, DataFormats> stringToDTDataFormatPair(
           {"int32", {DataFormats::IEEE_INT32, DataFormats::IEEE_INT32}},
           {"int64", {DataFormats::IEEE_INT64, DataFormats::IEEE_INT32}},
           {"bool", {DataFormats::BOOL, DataFormats::SEN169_FP16}},
-          {"bfloat16", {DataFormats::BFLOAT16, DataFormats::BFLOAT16}},
+          {"bfloat16", {DataFormats::BFLOAT16, DataFormats::SEN169_FP16}},
           {"quint8", {DataFormats::SENUINT32, DataFormats::SENUINT32}},
           {"qint8", {DataFormats::SENINT8, DataFormats::SENINT8}},
           {"quint4x2", {DataFormats::SENUINT2, DataFormats::SENUINT2}},
@@ -163,7 +168,7 @@ stringToSenDatatypePair(const std::string& type_name) {
           // bfloat
           {"bfloat16",
            {sendnn::sen_datatype_enum::bfloat16,
-            sendnn::sen_datatype_enum::bfloat16}},
+            sendnn::sen_datatype_enum::sen_fp16}},
           {"bfloat16_compute",
            {sendnn::sen_datatype_enum::bfloat16,
             sendnn::sen_datatype_enum::float32}},

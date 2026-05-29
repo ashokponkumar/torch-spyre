@@ -1,0 +1,75 @@
+name: tests-nightly
+
+on:
+  schedule:
+    - cron: 0 2 * * *
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  test:
+    name: Run Spyre unit tests - complete version
+    runs-on:
+      - x86_64
+      - spyre_pf_x1
+      - linux
+      - image_torch_spyre
+    timeout-minutes: 60
+    env:
+      # The CI env var is very important.
+      # GitHub actions automatically sets CI=true
+      # which causes the pytest inductor tests to fail with AssertionError
+      # due to a mix of fallbacks and decompositions.
+      # Here we set it to an empty string (or we could also unset it).
+      CI: ''
+      CLONED_TORCH_SPYRE_DIR: /home/senuser/torch-spyre
+      # The new torch-spyre image already contains a pre-cloned pytorch
+      # repo at /home/senuser/pytorch which TORCH_ROOT must point at.
+      TORCH_ROOT: /home/senuser/pytorch
+
+    steps:
+      # Sparse checkout into the GHA workspace so the local composite
+      # actions under .github/actions/ are available. The pre-cloned
+      # repo at $CLONED_TORCH_SPYRE_DIR is what the tests actually run
+      # against.
+      - name: Checkout composite actions
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
+      - uses: ./.github/actions/checkout-prebuilt-torch-spyre
+
+      - uses: ./.github/actions/checkout-prebuilt-pytorch
+
+      - uses: ./.github/actions/gather-runner-info
+
+      - uses: ./.github/actions/build-torch-spyre
+
+      - name: Run unit tests
+        run: |
+          source "$HOME/.bashrc"
+          source /etc/profile.d/ibm-aiu-setup.sh
+          cd "$CLONED_TORCH_SPYRE_DIR"
+          source .venv/bin/activate
+          echo 'Run unit tests start'
+          pytest tests/ --cpu-compile -vvv -s || EXIT_CODE=$?
+          EXIT_CODE=${EXIT_CODE:-0}
+          echo "pytest EXIT_CODE: ${EXIT_CODE}"
+          if [[ "$EXIT_CODE" == '0' ]] ; then
+            echo 'pytest success'
+          else
+            echo 'pytest failed'
+          fi
+          echo 'Run unit tests end'
+          exit "$EXIT_CODE"
