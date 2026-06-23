@@ -15,7 +15,9 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.matmul` | | Y | Spyre | |
 | `torch.addmm` | Y | Y | Spyre | Decomposed to `mm` + `add` |
 | `torch.bmm` | Y | Y | Spyre | |
+| `torch._scaled_mm` | | Y | Spyre | Compiled only; lowering in `_inductor/lowering.py` |
 | `torch.nn.functional.linear` | Y | Y | Spyre | Decomposed to `matmul` + `add` |
+| `torch.nn.functional.conv2d` | Y | Y | Spyre | Custom decomposition (`conv2d_via_bmm`); CPU fallback for the im2col step |
 | **Activation Functions** | | | | |
 | `torch.nn.functional.softmax` | Y | Y | Spyre | |
 | `torch.nn.functional.layer_norm` | Y | Y | Spyre | Custom decomposition |
@@ -26,7 +28,7 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.nn.functional.sigmoid` | Y | Y | Spyre | |
 | `torch.nn.functional.softplus` | Y | Y | Spyre | Custom op + lowering |
 | `torch.nn.functional.dropout` | Y | Y | Spyre | |
-| `torch.nn.functional.scaled_dot_product_attention` | | Y | Spyre | Custom decomposition (math path); compiled only |
+| `torch.nn.functional.scaled_dot_product_attention` | Y | Y | Spyre | Custom decomposition (math path); auto-registers a PrivateUse1 kernel for eager dispatch |
 | **Pointwise Unary** | | | | |
 | `torch.abs` | Y | Y | Spyre | |
 | `torch.neg` | Y | Y | Spyre | |
@@ -36,32 +38,39 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.rsqrt` | Y | Y | Spyre | |
 | `torch.reciprocal` | Y | Y | Spyre | |
 | `torch.tanh` | Y | Y | Spyre | |
+| `torch.floor` | Y | Y | Spyre | |
+| `torch.ceil` | Y | Y | Spyre | Custom decomposition |
+| `torch.sign` | Y | Y | Spyre | Custom decomposition |
 | `torch.logical_not` | Y | Y | Spyre | Custom decomposition |
 | `torch.bitwise_not` | Y | Y | Spyre | Custom decomposition |
-| `torch.clamp` | | Y | Spyre | Custom op + lowering |
+| `torch.clamp` | Y | Y | Spyre | Custom op + lowering |
 | `torch.pow` | Y | Y | Spyre | |
+| `torch.nn.functional.mish` | Y | Y | Spyre | Eager via `aten.mish.out` |
 | **Pointwise Binary** | | | | |
-| `torch.add` | Y | Y | Spyre | |
-| `torch.sub` | Y | Y | Spyre | |
+| `torch.add` | Y | Y | Spyre | Supports `alpha` parameter |
+| `torch.sub` | Y | Y | Spyre | Supports `alpha` parameter |
 | `torch.mul` | Y | Y | Spyre | |
 | `torch.div` | Y | Y | Spyre | |
 | `torch.maximum` | Y | Y | Spyre | |
-| `torch.bitwise_and` | | Y | Spyre | Custom decomposition |
-| `torch.where` | | Y | Spyre | Compiled only |
+| `torch.minimum` | Y | Y | Spyre | |
+| `torch.bitwise_and` | Y | Y | Spyre | Custom decomposition |
+| `torch.where` | Y | Y | Spyre | `where.self` registered eagerly; `where.Scalar*` overloads via custom decomposition |
 | **Comparison** | | | | |
 | `torch.eq` | Y | Y | Spyre | |
-| `torch.ne` | | Y | Spyre | |
-| `torch.gt` | | Y | Spyre | |
+| `torch.ne` | Y | Y | Spyre | |
+| `torch.gt` | Y | Y | Spyre | |
 | `torch.lt` | Y | Y | Spyre | |
 | `torch.ge` | Y | Y | Spyre | |
-| `torch.le` | | Y | Spyre | |
+| `torch.le` | Y | Y | Spyre | |
 | **Reduction** | | | | |
 | `torch.sum` | Y | Y | Spyre | |
 | `torch.mean` | Y | Y | Spyre | |
 | `torch.amax` | | Y | Spyre | Compiled only (no eager dispatch) |
 | `torch.amin` | | Y | Spyre | Compiled only (no eager dispatch) |
-| `torch.max` | | Y | Spyre | Compiled only (no eager dispatch) |
-| `torch.linalg.vector_norm` | Y | | Spyre | Eager only; compiled support not validated |
+| `torch.max` | Y | Y | Spyre | `max.dim` via custom decomposition |
+| `torch.min` | Y | Y | Spyre | `min.dim` via custom decomposition (fp16) |
+| `torch.topk` | | Y | Spyre | Custom decomposition + custom ops (`spyre::topkvalue`, `spyre::topkindex`) |
+| `torch.linalg.vector_norm` | Y | Y | Spyre | |
 | **View Ops** [^views] | | | | |
 | `torch.reshape` / `torch.view` | | Y | Spyre | Includes `_reshape_alias` lowering |
 | `torch.transpose` | | Y | Spyre | |
@@ -71,9 +80,12 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.contiguous` | | Y | Spyre | Compiled only |
 | `torch.squeeze` | | Y | Spyre | Partial; some shapes trigger internal recompile |
 | `torch.unsqueeze` | | Y | Spyre | Partial; some shapes trigger internal recompile |
+| `torch.flatten` | | Y | Spyre | Compiled only (lowers via `reshape`) |
 | `torch.cat` | Y | Y | Spyre | |
 | `torch.stack` | Y | | Spyre | Eager only |
-| `torch.repeat` | Y | | Spyre | Eager only |
+| `torch.repeat` | Y | Y | Spyre | |
+| `torch.unbind` | Y | Y | Spyre | |
+| `torch.Tensor.unfold` | Y | Y | Spyre | View op |
 | `torch.split` | | Y | Spyre | Compiled only (lowers via `aten.slice`) |
 | `torch.expand` | | Y | Spyre | Compiled only; supported when followed by a materializing op (e.g. `clone`, `contiguous`). Used internally by `ones`, `pad`, and SDPA decompositions |
 | `torch.narrow` / `torch.select` | | Y | Spyre | Compiled only; basic slicing works (see `test_slice` / `test_split`); broader `narrow`/`select` coverage in development |
@@ -81,8 +93,15 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.ones` | Y | Y | Spyre | Custom decomposition |
 | `torch.new_ones` | Y | Y | Spyre | Custom decomposition |
 | `torch.zeros` | Y | Y | Spyre | Eager via `aten::zero_` (`ops/eager.py`) |
+| `torch.empty_like` | Y | Y | Spyre | |
 | `torch.full` | Y | Y | Spyre | Custom decomposition |
 | `torch.nn.functional.pad` / `torch.constant_pad_nd` | | Y | Spyre | Custom decomposition |
+| **In-place / Initialization** | | | | |
+| `torch.Tensor.fill_` | | Y | Spyre | Compiled only; eager kernel registered but not yet stable |
+| `torch.Tensor.normal_` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
+| `torch.Tensor.uniform_` | Y | | Spyre | Eager only |
+| `torch.Tensor.random_` | Y | | CPU fallback | Eager only; `from` overload |
+| `torch.is_nonzero` | | Y | Spyre | Compiled only |
 | **Utility** | | | | |
 | `torch.item` | Y | Y | Spyre | Copies to CPU, returns Python scalar |
 | **CPU Fallback** | | | | |
@@ -96,7 +115,9 @@ see [Adding Operations](../compiler/adding_operations.md).
 | `torch.bitwise_xor` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
 | `torch.bitwise_or` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
 | `torch.argmax` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
+| `torch.argmin` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
 | `torch.cumsum` | Y | Y | CPU fallback | Runs on CPU, result transferred back |
+| `torch.index_copy` | Y | | CPU fallback | Eager only; runs on CPU |
 
 > **Column key:**
 >

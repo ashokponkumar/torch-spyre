@@ -9,9 +9,21 @@
 #   bash run_test.sh config_a.yaml config_b.yaml [config_c.yaml ...] [extra pytest args...]
 #   bash run_test.sh configs/                            # all YAMLs in a directory
 #   bash run_test.sh configs/ extra.yaml -- [extra pytest args...]
+#
+# Usage (parallel -- split the tests across all available Spyre cards automatically to run parallely):
+#   bash run_test.sh config.yaml --parallel
+#   bash run_test.sh configs/ --parallel --junit-xml=report.xml
+#   bash run_test.sh config_a.yaml config_b.yaml --parallel -v
+#
+# --parallel detects the number of Spyre cards from PCIDEVICE_IBM_COM_AIU_PF
+# (comma count+1) or torch.spyre.device_count(), then distributes the resolved
+# test files round-robin across cards, running each card's slice in a
+# background subshell with SPYRE_DEVICES=<card_idx>.  Falls back to serial
+# execution when only one card is detected.  JUnit XML shards from all cards
+# are merged into the single --junit-xml destination at the end.
 
 # When more than one YAML file is supplied the configs are merged in order via
-# spyre_test_utilities.py
+# oot_test_utilities.py
 #   - `files` entries with the same path are combined (tests deduplicated).
 #   - `global` list keys form a superset; identical items are deduplicated.
 #   - Conflicting scalar globals raise an error.
@@ -60,6 +72,40 @@ if [[ $# -lt 1 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# --skip-slow / --include-slow flag parsing
+#
+# Controls whether platform-specific slow tests are skipped or run.
+# Default: include all tests (no filtering).
+#
+# --skip-slow    : skip tests tagged slow__plat_<arch> for the current platform.
+#                  On platforms with no slow tag defined, this is a no-op.
+# --include-slow : explicit no-op (default behaviour, for clarity in scripts).
+#
+# --parallel     : run test files in parallel across all available Spyre cards.
+#                  Each card receives a round-robin slice of the resolved file
+#                  list.  Card count is detected from PCIDEVICE_IBM_COM_AIU_PF
+#                  (comma count + 1) or torch.spyre.device_count() as fallback.
+#                  Falls back to serial execution when only one card is found.
+#
+# Usage:
+#   run_test.sh config.yaml                 # default: all tests run serially
+#   run_test.sh config.yaml --include-slow  # same, explicit
+#   run_test.sh config.yaml --skip-slow     # skip slow tests on this platform
+#   run_test.sh config.yaml --parallel      # parallelize tests across all Spyre cards
+# ------------------------------------------------------------------------------------
+_SKIP_SLOW=0
+_PARALLEL=0
+_FILTERED_ARGS=()
+for _arg in "$@"; do
+    case "$_arg" in
+        --skip-slow)    _SKIP_SLOW=1 ;;
+        --include-slow) _SKIP_SLOW=0 ;;
+        --parallel)     _PARALLEL=1 ;;
+        *)              _FILTERED_ARGS+=("$_arg") ;;
+    esac
+done
+set -- "${_FILTERED_ARGS[@]+"${_FILTERED_ARGS[@]}"}"
+# ---------------------------------------------------------------------------
 # Multi-config support
 #
 # Collect all leading positional arguments that are YAML files or directories
@@ -90,14 +136,14 @@ for _arg in "$@"; do
         _dir_yamls=()
         while IFS= read -r -d '' _f; do
             _dir_yamls+=("$(realpath "$_f")")
-        done < <(find "$(realpath "$_arg")" -maxdepth 1 \
+        done < <(find "$(realpath "$_arg")" \
                      \( -name '*.yaml' -o -name '*.yml' \) \
                      -type f -print0 | sort -z)
         if [[ ${#_dir_yamls[@]} -eq 0 ]]; then
             echo "WARNING: No YAML files found in directory: $_arg" >&2
         else
-            echo "[spyre_run] Expanded directory '$_arg' -> ${#_dir_yamls[@]} config(s):"
-            for _f in "${_dir_yamls[@]}"; do echo "[spyre_run]   $_f"; done
+            echo "[torch_oot_device_tests_run] Expanded directory '$_arg' -> ${#_dir_yamls[@]} config(s):"
+            for _f in "${_dir_yamls[@]}"; do echo "[torch_oot_device_tests_run]   $_f"; done
             YAML_CONFIGS+=("${_dir_yamls[@]}")
         fi
     elif [[ $_parsing_yamls -eq 1 && ( "$_arg" == *.yaml || "$_arg" == *.yml ) && -f "$_arg" ]]; then
@@ -128,32 +174,51 @@ if [[ ${#YAML_CONFIGS[@]} -eq 1 ]]; then
         exit 1
     fi
 
-    echo "[spyre_run] Using YAML config: $YAML_CONFIG"
+    echo "[torch_oot_device_tests_run] Using YAML config: $YAML_CONFIG"
 else
     # -----------------------------------------------------------------------
-    # Multi-config path -- merge via spyre_test_utilities.py
+    # Multi-config path -- merge via oot_test_utilities.py
     # -----------------------------------------------------------------------
-    echo "[spyre_run] Merging ${#YAML_CONFIGS[@]} YAML config(s):"
+    echo "[torch_oot_device_tests_run] Merging ${#YAML_CONFIGS[@]} YAML config(s):"
     for _c in "${YAML_CONFIGS[@]}"; do
-        echo "[spyre_run]   $_c"
+        echo "[torch_oot_device_tests_run]   $_c"
     done
 
     _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     _UTILITIES_PY=""
-    if [[ -f "${_script_dir}/spyre_test_utilities.py" ]]; then
-        _UTILITIES_PY="${_script_dir}/spyre_test_utilities.py"
+    if [[ -f "${_script_dir}/oot_test_utilities.py" ]]; then
+        _UTILITIES_PY="${_script_dir}/oot_test_utilities.py"
     else
         _first_config_dir="$(dirname "${YAML_CONFIGS[0]}")"
-        if [[ -f "${_first_config_dir}/spyre_test_utilities.py" ]]; then
-            _UTILITIES_PY="${_first_config_dir}/spyre_test_utilities.py"
+        if [[ -f "${_first_config_dir}/oot_test_utilities.py" ]]; then
+            _UTILITIES_PY="${_first_config_dir}/oot_test_utilities.py"
         fi
     fi
 
     if [[ -z "$_UTILITIES_PY" ]]; then
-        echo "ERROR: spyre_test_utilities.py not found beside run_test.sh or beside the first config." >&2
-        echo "       Place spyre_test_utilities.py in the same directory as run_test.sh." >&2
+        echo "ERROR: oot_test_utilities.py not found beside run_test.sh or beside the first config." >&2
+        echo "       Place oot_test_utilities.py in the same directory as run_test.sh." >&2
         exit 1
     fi
+
+    # -----------------------------------------------------------------------
+    # Pre-merge: record which raw path tokens each YAML contributes.
+    # Used later to assign a per-YAML label to every entry in TEST_FILES so
+    # we can print per-suite result summaries at the end of the run.
+    #
+    # _YAML_FILE_SETS[k] is a newline-free space-joined string of the raw
+    # path tokens from YAML_CONFIGS[k] (before variable expansion/glob).
+    # Matching against TEST_FILES (which ARE expanded) is done in step 7b.
+    # -----------------------------------------------------------------------
+    _YAML_FILE_SETS=()
+    for _yc in "${YAML_CONFIGS[@]}"; do
+        _raw_tokens=$(grep -E '^\s*(- )?path:\s' "$_yc" 2>/dev/null \
+            | sed 's/.*path:[[:space:]]*//' \
+            | sed 's/[[:space:]]*#.*//' \
+            | sed '/^[[:space:]]*$/d' \
+            | tr '\n' '|')
+        _YAML_FILE_SETS+=("${_raw_tokens:-}")
+    done
 
     YAML_CONFIG=$(python3 "$_UTILITIES_PY" "${YAML_CONFIGS[@]}") || {
         echo "ERROR: Failed to merge YAML configs." >&2
@@ -199,33 +264,53 @@ _find_sibling_with_sentinel() {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Resolve and export TORCH_ROOT
+# 2. Resolve and export TORCH_ROOT (only when referenced in YAML paths)
 # ---------------------------------------------------------------------------
-echo "[spyre_run] Resolving TORCH_ROOT..."
-if [[ -n "${TORCH_ROOT:-}" && -d "$TORCH_ROOT" ]]; then
-    echo "[spyre_run]   already set: $TORCH_ROOT"
-else
-    TORCH_ROOT=""
+_check_torch_root_needed() {
+    grep -qE 'path:\s.*\$\{TORCH_ROOT\}' "$1" 2>/dev/null && return 0
+    if grep -E '^\s*(- )?path:\s' "$1" | grep -qE '\$\{TORCH_ROOT\}'; then
+        return 0
+    fi
+    return 1
+}
 
-    _found=$(python3 -c "
+if _check_torch_root_needed "$YAML_CONFIG"; then
+    _TORCH_ROOT_NEEDED=1
+    echo "[spyre_run]   YAML config references \${TORCH_ROOT} root — resolving..."
+else
+    _TORCH_ROOT_NEEDED=0
+    echo "[spyre_run]   YAML config does not reference \${TORCH_ROOT} — skipping resolution."
+fi
+
+if [[ $_TORCH_ROOT_NEEDED -eq 1 ]]; then
+    echo "[spyre_run] Resolving TORCH_ROOT..."
+    if [[ -n "${TORCH_ROOT:-}" && -d "$TORCH_ROOT" ]]; then
+        echo "[spyre_run]   already set: $TORCH_ROOT"
+    else
+        TORCH_ROOT=""
+
+        _found=$(python3 -c "
 import torch, os
 candidate = os.path.dirname(os.path.dirname(os.path.abspath(torch.__file__)))
 if os.path.isfile(os.path.join(candidate, 'test', 'test_binary_ufuncs.py')):
     print(candidate)
 " 2>/dev/null) || true
-    [[ -n "$_found" ]] && TORCH_ROOT="$_found"
+        [[ -n "$_found" ]] && TORCH_ROOT="$_found"
 
-    if [[ -z "$TORCH_ROOT" ]]; then
-        TORCH_ROOT=$(_find_sibling_with_sentinel "$YAML_DIR" "test/test_binary_ufuncs.py" 2>/dev/null) || true
-    fi
+        if [[ -z "$TORCH_ROOT" ]]; then
+            TORCH_ROOT=$(_find_sibling_with_sentinel "$YAML_DIR" "test/test_binary_ufuncs.py" 2>/dev/null) || true
+        fi
 
-    if [[ -z "$TORCH_ROOT" ]]; then
-        echo "ERROR: Could not locate PyTorch source root." >&2
-        echo "       Expected pytorch/ as a sibling of your torch-spyre repo, or" >&2
-        echo "       an editable install (pip install -e .)." >&2
-        echo "       Set TORCH_ROOT explicitly if the layout differs." >&2
-        exit 1
+        if [[ -z "$TORCH_ROOT" ]]; then
+            echo "ERROR: Could not locate PyTorch source root." >&2
+            echo "       Expected pytorch/ as a sibling of your torch-spyre repo, or" >&2
+            echo "       an editable install (pip install -e .)." >&2
+            echo "       Set TORCH_ROOT explicitly if the layout differs." >&2
+            exit 1
+        fi
     fi
+else
+    TORCH_ROOT="${TORCH_ROOT:-}"
 fi
 export TORCH_ROOT
 export PYTORCH_ROOT="$TORCH_ROOT"
@@ -250,7 +335,7 @@ try:
         url = data.get('url', '')
         if url.startswith('file://'):
             candidate = url[len('file://'):]
-            if os.path.isfile(os.path.join(candidate, 'tests', 'spyre_test_base_common.py')):
+            if os.path.isfile(os.path.join(candidate, 'tests', 'oot_test_base_common.py')):
                 print(candidate)
 except Exception:
     pass
@@ -260,7 +345,7 @@ except Exception:
     if [[ -z "$TORCH_DEVICE_ROOT" ]]; then
         _found=$(python3 -c "
 import importlib.util, os
-spec = importlib.util.find_spec('spyre_test_base_common')
+spec = importlib.util.find_spec('oot_test_base_common')
 if spec:
     print(os.path.dirname(os.path.dirname(os.path.abspath(spec.origin))))
 " 2>/dev/null) || true
@@ -268,7 +353,7 @@ if spec:
     fi
 
     if [[ -z "$TORCH_DEVICE_ROOT" ]]; then
-        TORCH_DEVICE_ROOT=$(_walk_up_for_sentinel "$YAML_DIR" "tests/spyre_test_base_common.py" 2>/dev/null) || true
+        TORCH_DEVICE_ROOT=$(_walk_up_for_sentinel "$YAML_DIR" "tests/oot_test_base_common.py" 2>/dev/null) || true
     fi
 
     if [[ -z "$TORCH_DEVICE_ROOT" ]]; then
@@ -280,14 +365,14 @@ if spec:
     fi
 fi
 export TORCH_DEVICE_ROOT
-export TORCH_SPYRE_ROOT="$TORCH_DEVICE_ROOT"
-echo "[spyre_run]   TORCH_DEVICE_ROOT=$TORCH_DEVICE_ROOT"
+export TORCH_OOT_ROOT="$TORCH_DEVICE_ROOT"
+echo "[torch_oot_device_tests_run]   TORCH_OOT_ROOT=$TORCH_DEVICE_ROOT"
 
 # ---------------------------------------------------------------------------
 # 4. Export all framework environment variables
 # ---------------------------------------------------------------------------
 export PYTORCH_TESTING_DEVICE_ONLY_FOR="privateuse1"
-export TORCH_TEST_DEVICES="${TORCH_DEVICE_ROOT}/tests/spyre_test_base_common.py"
+export TORCH_TEST_DEVICES="${TORCH_DEVICE_ROOT}/tests/oot_test_base_common.py"
 export PYTORCH_TEST_CONFIG="$YAML_CONFIG"
 
 _spyre_tests_path="${TORCH_DEVICE_ROOT}/tests"
@@ -297,13 +382,48 @@ case ":${PYTHONPATH:-}:" in
 esac
 
 echo ""
-echo "[spyre_run] Environment set:"
+echo "[torch_oot_device_tests_run] Environment set:"
 echo "  TORCH_ROOT                      = $TORCH_ROOT"
 echo "  TORCH_DEVICE_ROOT               = $TORCH_DEVICE_ROOT"
 echo "  PYTORCH_TESTING_DEVICE_ONLY_FOR = $PYTORCH_TESTING_DEVICE_ONLY_FOR"
 echo "  TORCH_TEST_DEVICES              = $TORCH_TEST_DEVICES"
 echo "  PYTORCH_TEST_CONFIG             = $PYTORCH_TEST_CONFIG"
 echo "  PYTHONPATH                      = $PYTHONPATH"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Platform-specific slow test filtering.
+#
+# Slow tests are tagged slow__plat_<arch> in the YAML config.
+# Filtering is opt-in: pass --skip-slow to activate.
+# Default behaviour (no flag): all tests run regardless of platform.
+#
+# To mark a test as slow on a platform, add the tag in the YAML config:
+#   tags: [slow__plat_ppc64]   # skipped on ppc64le when --skip-slow is passed
+# ---------------------------------------------------------------------------
+_machine="$(uname -m 2>/dev/null || true)"
+case "$_machine" in
+    ppc64*)        _PLATFORM_SLOW_TAG="slow__plat_ppc64"   ;;
+    s390x*)        _PLATFORM_SLOW_TAG="slow__plat_s390x"   ;;
+    x86_64*)        _PLATFORM_SLOW_TAG="slow__plat_x86_64"   ;;
+    aarch64|arm64) _PLATFORM_SLOW_TAG="slow__plat_aarch64" ;;
+    *)             _PLATFORM_SLOW_TAG="" ;;
+esac
+
+if [[ $_SKIP_SLOW -eq 1 ]]; then
+    if [[ -n "$_PLATFORM_SLOW_TAG" ]]; then
+        echo "[torch_oot_device_tests_run] --skip-slow: skipping tests tagged '${_PLATFORM_SLOW_TAG}' on ${_machine}"
+        EXTRA_PYTEST_ARGS+=("-m" "not ${_PLATFORM_SLOW_TAG}")
+    else
+        echo "[torch_oot_device_tests_run] --skip-slow: no slow tag defined for ${_machine}, all tests will run"
+    fi
+else
+    if [[ -n "$_PLATFORM_SLOW_TAG" ]]; then
+        echo "[torch_oot_device_tests_run] Platform ${_machine}: slow tag '${_PLATFORM_SLOW_TAG}' exists — pass --skip-slow to skip those tests"
+    else
+        echo "[torch_oot_device_tests_run] Platform ${_machine}: no slow tag defined, all tests will run"
+    fi
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -316,7 +436,7 @@ _extract_file_paths_from_yaml() {
         | sed '/^[[:space:]]*$/d'
 }
 
-echo "[spyre_run] Parsing YAML for test file paths..."
+echo "[torch_oot_device_tests_run] Parsing YAML for test file paths..."
 RAW_PATHS=()
 while IFS= read -r line; do
     RAW_PATHS+=("$line")
@@ -327,7 +447,7 @@ if [[ ${#RAW_PATHS[@]} -eq 0 ]]; then
     exit 1
 fi
 
-echo "[spyre_run] Found ${#RAW_PATHS[@]} path entry(s):"
+echo "[torch_oot_device_tests_run] Found ${#RAW_PATHS[@]} path entry(s):"
 for p in "${RAW_PATHS[@]}"; do
     echo "  $p"
 done
@@ -376,11 +496,56 @@ if [[ ${#TEST_FILES[@]} -eq 0 ]]; then
 fi
 
 echo ""
-echo "[spyre_run] Resolved test file(s):"
+echo "[torch_oot_device_tests_run] Resolved test file(s):"
 for f in "${TEST_FILES[@]}"; do
     echo "  $f"
 done
 echo ""
+
+# ---------------------------------------------------------------------------
+# 7b. Per-YAML file-index mapping (multi-config only)
+#
+# Build _FILE_YAML_LABEL[i] = human-readable label for TEST_FILES[i].
+# For single-config runs every entry gets the config basename.
+# For multi-config runs each entry is labelled with the basename of the first
+# YAML whose raw path token list contains a substring that matches the
+# resolved absolute path of that file.  Deduplication inside merge means a
+# file shared by two YAMLs is credited to whichever YAML appeared first.
+# ---------------------------------------------------------------------------
+_FILE_YAML_LABEL=()
+if [[ ${#YAML_CONFIGS[@]} -le 1 ]]; then
+    # Single config — label every file the same.
+    _single_label="$(basename "${YAML_CONFIGS[0]:-$YAML_CONFIG}")"
+    for _fi in "${!TEST_FILES[@]}"; do
+        _FILE_YAML_LABEL+=("$_single_label")
+    done
+else
+    for _fi in "${!TEST_FILES[@]}"; do
+        _abs_f="${TEST_FILES[$_fi]}"
+        _label=""
+        for _yi in "${!YAML_CONFIGS[@]}"; do
+            _token_str="${_YAML_FILE_SETS[$_yi]:-}"
+            # Each token is separated by '|'. Check if the expanded file
+            # path matches any token after variable substitution.
+            IFS='|' read -ra _tokens <<< "$_token_str"
+            for _tok in "${_tokens[@]}"; do
+                [[ -z "$_tok" ]] && continue
+                # Expand the same two root variables used in step 6.
+                _etok="${_tok//\$\{TORCH_ROOT\}/$TORCH_ROOT}"
+                _etok="${_etok//\$\{TORCH_DEVICE_ROOT\}/$TORCH_DEVICE_ROOT}"
+                # Strip glob wildcards for prefix/substring matching.
+                _etok_base="${_etok%%\**}"
+                _etok_base="${_etok_base%%\?*}"
+                if [[ -n "$_etok_base" && "$_abs_f" == *"$_etok_base"* ]]; then
+                    _label="$(basename "${YAML_CONFIGS[$_yi]}")"
+                    break 2
+                fi
+            done
+        done
+        # Fallback: label unknown files with the merged config basename.
+        _FILE_YAML_LABEL+=("${_label:-$(basename "$YAML_CONFIG")}")
+    done
+fi
 
 # ---------------------------------------------------------------------------
 # 8. AST analyzer
@@ -704,12 +869,12 @@ WRAPPER_FILES=()
 _cleanup_wrappers() {
     for wf in "${WRAPPER_FILES[@]+"${WRAPPER_FILES[@]}"}"; do
         [[ -f "$wf" ]] && rm -f "$wf" && \
-            echo "[spyre_run] Cleaned up wrapper: $wf"
+            echo "[torch_oot_device_tests_run] Cleaned up wrapper: $wf"
     done
     # Remove merged config temp file (only if we created it)
     if [[ $MERGED_CONFIG_IS_TEMP -eq 1 && -n "${YAML_CONFIG:-}" && -f "$YAML_CONFIG" ]]; then
         rm -f "$YAML_CONFIG"
-        echo "[spyre_run] Removed merged temp config: $YAML_CONFIG"
+        echo "[torch_oot_device_tests_run] Removed merged temp config: $YAML_CONFIG"
     fi
     # Remove marker sidecar JSON written by TorchTestBase.instantiate_test.
     # Normally deleted by _XML_INJECT_PY after injection, but when --junit-xml
@@ -717,7 +882,7 @@ _cleanup_wrappers() {
     local _sidecar="${YAML_CONFIG}.markers.json"
     if [[ -f "$_sidecar" ]]; then
         rm -f "$_sidecar"
-        echo "[spyre_run] Cleaned up marker sidecar: $_sidecar"
+        echo "[torch_oot_device_tests_run] Cleaned up marker sidecar: $_sidecar"
     fi
 }
 trap _cleanup_wrappers EXIT
@@ -733,7 +898,7 @@ generate_wrapper_if_needed() {
 
     local result
     if ! result=$(python3 -c "$_ANALYZER_PY" "$test_file" 2>/dev/null); then
-        echo "[spyre_run] WARNING: could not analyze $test_file -- running as-is" >&2
+        echo "[torch_oot_device_tests_run] WARNING: could not analyze $test_file -- running as-is" >&2
         return 0
     fi
 
@@ -742,7 +907,7 @@ generate_wrapper_if_needed() {
 import json,sys; d=json.load(sys.stdin); print(d.get('error',''))
 " 2>/dev/null) || true
     if [[ -n "$err" ]]; then
-        echo "[spyre_run] WARNING: parse error in $test_file: $err -- running as-is" >&2
+        echo "[torch_oot_device_tests_run] WARNING: parse error in $test_file: $err -- running as-is" >&2
         return 0
     fi
 
@@ -778,11 +943,11 @@ import json,sys; d=json.load(sys.stdin); print(' '.join(d['needs_cleanup']))
     [[ -n "$cleanup_str" ]] && read -r -a CLEANUP_CLASSES <<< "$cleanup_str"
     # Warn about plain classes -- they are safe only when YAML skips them.
     if [[ ${#PLAIN_CLASSES[@]} -gt 0 ]]; then
-        echo "[spyre_run] NOTE: the following classes have no 'device' arg in their"
-        echo "[spyre_run]       test methods. They are safe under mode:skip but will"
-        echo "[spyre_run]       fail at runtime if listed as mandatory_success/xfail:"
+        echo "[torch_oot_device_tests_run] NOTE: the following classes have no 'device' arg in their"
+        echo "[torch_oot_device_tests_run]       test methods. They are safe under mode:skip but will"
+        echo "[torch_oot_device_tests_run]       fail at runtime if listed as mandatory_success/xfail:"
         for cls in "${PLAIN_CLASSES[@]}"; do
-            echo "[spyre_run]         $cls"
+            echo "[torch_oot_device_tests_run]         $cls"
         done
     fi
 
@@ -793,23 +958,23 @@ import json,sys; d=json.load(sys.stdin); print(' '.join(d['needs_cleanup']))
     wrapper_path="${original_dir}/${original_stem}__oot_wrapper.py"
     # Report uncontrolled classes (never instantiated upstream at all)
     if [[ ${#UNCONTROLLED_CLASSES[@]} -gt 0 ]]; then
-        echo "[spyre_run] Injecting instantiate_device_type_tests for uncontrolled classes in: $(basename "$test_file")"
+        echo "[torch_oot_device_tests_run] Injecting instantiate_device_type_tests for uncontrolled classes in: $(basename "$test_file")"
         for cls in "${UNCONTROLLED_CLASSES[@]}"; do
-            echo "[spyre_run]   -> $cls"
+            echo "[torch_oot_device_tests_run]   -> $cls"
         done
     fi
     # Report restricted classes (instantiated upstream with only_for, excluding spyre)
     if [[ ${#RESTRICTED_CLASSES[@]} -gt 0 ]]; then
-        echo "[spyre_run] Re-injecting instantiate_device_type_tests (dropping only_for) for restricted classes in: $(basename "$test_file")"
+        echo "[torch_oot_device_tests_run] Re-injecting instantiate_device_type_tests (dropping only_for) for restricted classes in: $(basename "$test_file")"
         for cls in "${RESTRICTED_CLASSES[@]}"; do
-            echo "[spyre_run]   -> $cls  (upstream: only_for=... excluded privateuse1)"
+            echo "[torch_oot_device_tests_run]   -> $cls  (upstream: only_for=... excluded privateuse1)"
         done
     fi
 
     local conftest_path
     conftest_path="${original_dir}/__oot_conftest_${original_stem}.py"
 
-    echo "[spyre_run] Generating wrapper: $(basename "$wrapper_path")"
+    echo "[torch_oot_device_tests_run] Generating wrapper: $(basename "$wrapper_path")"
     # Build the per-class injection block first (pure bash, no heredoc nesting issue).
     # All classes use _pre_import_classes which is populated before the star-import.
     local injection_block=""
@@ -874,7 +1039,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
 
 # Ensure the spyre tests directory is on sys.path before any torch imports.
 # torch.testing._internal.common_device_type uses runpy to load
-# TORCH_TEST_DEVICES (spyre_test_base_common.py), which imports spyre_*
+# TORCH_TEST_DEVICES (oot_test_base_common.py), which imports spyre_*
 # modules.  Those modules must be findable on sys.path at that point.
 # PYTHONPATH is set by run_test.sh but Python only applies it at interpreter
 # startup -- subsequent imports don't re-read it, so we inject it explicitly.
@@ -912,7 +1077,7 @@ for _p in reversed(_os.environ.get('PYTHONPATH', '').split(_os.pathsep)):
 import importlib.util as _ilu
 
 _pre_import_classes = {}
-_restricted_names = set([${quoted_restricted_list}])
+_restricted_names: set[str] = set([${quoted_restricted_list}])
 
 def _do_pre_import():
     """Capture original class objects before the star-import deletes them."""
@@ -1057,18 +1222,18 @@ CONFTEST_EOF
 # 10. Clean up any stale wrappers from previous crashed/interrupted runs
 #     before generating new ones, so pytest never picks up an old wrapper.
 # ---------------------------------------------------------------------------
-echo "[spyre_run] Cleaning up any stale OOT wrappers from previous runs..."
+echo "[torch_oot_device_tests_run] Cleaning up any stale OOT wrappers from previous runs..."
 for test_file in "${TEST_FILES[@]}"; do
     original_dir="$(dirname "$test_file")"
     original_stem="$(basename "$test_file" .py)"
     stale_wrapper="${original_dir}/${original_stem}__oot_wrapper.py"
     stale_conftest="${original_dir}/__oot_conftest_${original_stem}.py"
     if [[ -f "$stale_wrapper" ]]; then
-        echo "[spyre_run]   Removing stale wrapper: $stale_wrapper"
+        echo "[torch_oot_device_tests_run]   Removing stale wrapper: $stale_wrapper"
         rm -f "$stale_wrapper"
     fi
     if [[ -f "$stale_conftest" ]]; then
-        echo "[spyre_run]   Removing stale conftest: $stale_conftest"
+        echo "[torch_oot_device_tests_run]   Removing stale conftest: $stale_conftest"
         rm -f "$stale_conftest"
     fi
 done
@@ -1076,7 +1241,7 @@ done
 # ---------------------------------------------------------------------------
 # 11. Build the final run list (original or wrapper per file)
 # ---------------------------------------------------------------------------
-echo "[spyre_run] Checking for uncontrolled/restricted TestCase classes..."
+echo "[torch_oot_device_tests_run] Checking for uncontrolled/restricted TestCase classes..."
 echo ""
 
 RUN_FILES=()
@@ -1199,7 +1364,7 @@ try:
 except OSError:
     pass
 
-print(f"[spyre_run] Tags injected into XML: {xml_path}", flush=True)
+print(f"[torch_oot_device_tests_run] Tags injected into XML: {xml_path}", flush=True)
 '
 
 OVERALL_EXIT=0
@@ -1241,6 +1406,69 @@ done
 
 # Accumulate shard paths for the final merge step.
 _XML_SHARDS=()
+
+# ---------------------------------------------------------------------------
+# Per-suite result tracking (multi-config only).
+#
+# _SUITE_LABELS[]   - unique YAML labels in first-seen order
+# _SUITE_COUNTS[]   - parallel to _SUITE_LABELS; each entry is a
+#                     space-separated string: "passed failed error skipped xfailed xpassed"
+#                     Counts are accumulated across all files belonging to that suite.
+#
+# _add_suite_counts <label> <passed> <failed> <error> <skipped> <xfailed> <xpassed>
+#   Looks up <label> in _SUITE_LABELS; appends if new, then adds the counts.
+# ---------------------------------------------------------------------------
+_SUITE_LABELS=()
+_SUITE_COUNTS=()
+
+_add_suite_counts() {
+    local _lbl="$1" _p="$2" _f="$3" _e="$4" _s="$5" _xf="$6" _xp="$7" _t="${8:-0}"
+    local _idx=-1
+    for _ci in "${!_SUITE_LABELS[@]}"; do
+        [[ "${_SUITE_LABELS[$_ci]}" == "$_lbl" ]] && { _idx=$_ci; break; }
+    done
+    if [[ $_idx -eq -1 ]]; then
+        _SUITE_LABELS+=("$_lbl")
+        _SUITE_COUNTS+=("$_p $_f $_e $_s $_xf $_xp $_t")
+    else
+        local _cur="${_SUITE_COUNTS[$_idx]}"
+        read -r _cp _cf _ce _cs _cxf _cxp _ct <<< "$_cur"
+        local _new_t
+        _new_t=$(python3 -c "print('%.2f' % (${_ct:-0} + ${_t:-0}))" 2>/dev/null || echo "0")
+        _SUITE_COUNTS[$_idx]="$(( _cp+_p )) $(( _cf+_f )) $(( _ce+_e )) $(( _cs+_s )) $(( _cxf+_xf )) $(( _cxp+_xp )) $_new_t"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# _parse_pytest_summary_line <output_file>
+#
+# Reads the captured pytest output file, finds the terminal summary line
+# (e.g. "5 passed, 2 failed, 1 skipped, 1 xfailed in 3.14s"), and prints
+# space-separated: passed failed error skipped xfailed xpassed
+# Prints "0 0 0 0 0 0" when no summary line is found.
+# ---------------------------------------------------------------------------
+_parse_pytest_summary_line() {
+    local _f="$1"
+    [[ -f "$_f" ]] || { echo "0 0 0 0 0 0 0"; return; }
+    # The summary line is the last line matching one of the known result words.
+    local _line
+    _line=$(grep -E '(passed|failed|error|skipped|xfailed|xpassed)' "$_f" \
+            | grep -v '^\s*#' | tail -1) || true
+    if [[ -z "$_line" ]]; then
+        echo "0 0 0 0 0 0 0"; return
+    fi
+    # Extract each counter with a portable sed; default to 0 when absent.
+    local _p _f2 _e _s _xf _xp _t
+    _p=$(echo  "$_line" | grep -oE '[0-9]+ passed'  | grep -oE '[0-9]+' || echo 0)
+    _f2=$(echo "$_line" | grep -oE '[0-9]+ failed'  | grep -oE '[0-9]+' || echo 0)
+    _e=$(echo  "$_line" | grep -oE '[0-9]+ error'   | grep -oE '[0-9]+' || echo 0)
+    _s=$(echo  "$_line" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' || echo 0)
+    _xf=$(echo "$_line" | grep -oE '[0-9]+ xfailed' | grep -oE '[0-9]+' || echo 0)
+    _xp=$(echo "$_line" | grep -oE '[0-9]+ xpassed' | grep -oE '[0-9]+' || echo 0)
+    # Extract the "in X.XXs" duration reported by pytest at the end of the summary line.
+    _t=$(echo  "$_line" | grep -oE 'in [0-9]+(\.[0-9]+)?s' | grep -oE '[0-9]+(\.[0-9]+)?' || echo 0)
+    echo "${_p:-0} ${_f2:-0} ${_e:-0} ${_s:-0} ${_xf:-0} ${_xp:-0} ${_t:-0}"
+}
 
 # ---------------------------------------------------------------------------
 # XML shard merger: combines N JUnit XML files (each produced by a separate
@@ -1293,29 +1521,66 @@ merged = (
     + "</testsuite></testsuites>"
 )
 Path(out_path).write_text(merged)
-print(f"[spyre_run] Merged {len(shard_paths)} XML shard(s) -> {out_path}", flush=True)
+print(f"[torch_oot_device_tests_run] Merged {len(shard_paths)} XML shard(s) -> {out_path}", flush=True)
 '
 
 # ---------------------------------------------------------------------------
-# _run_pytest_isolated <run_dir> <run_basename> <exit_tmp> [pytest_args...]
+# _run_pytest_isolated <run_dir> <run_basename> <exit_tmp> <output_tmp> \
+#                      [pytest_args...]
 #
 # Runs a single pytest invocation inside a subshell that is fully isolated
 # from the parent process's errexit/pipefail settings.  The real pytest exit
-# code is written to <exit_tmp> so the caller can read it even when the
-# subshell itself exits non-zero.  The subshell's stdout/stderr are NOT
-# redirected so output streams to the terminal as usual.
+# code is written to <exit_tmp>.
+#
+# <output_tmp>: path to capture combined stdout+stderr via tee while still
+#   streaming to the terminal.  Pass "" to skip capture.
 #
 # Returns 0 always; caller reads <exit_tmp> for the real exit code.
 # ---------------------------------------------------------------------------
 _run_pytest_isolated() {
-    local _dir="$1" _base="$2" _exit_tmp="$3"
-    shift 3
+    local _dir="$1" _base="$2" _exit_tmp="$3" _out_tmp="$4"
+    shift 4
     local _args=("$@")
     (
         set +euo pipefail
         cd "$_dir"
-        python3 -m pytest "$_base" "${_args[@]}"
-        echo $? > "$_exit_tmp"
+
+        # Helper: run a command, tee its output when _out_tmp is set.
+        _run_cmd() {
+            if [[ -n "$_out_tmp" ]]; then
+                "$@" 2>&1 | tee "$_out_tmp"; echo "${PIPESTATUS[0]}" > "$_exit_tmp"
+            else
+                "$@"; echo $? > "$_exit_tmp"
+            fi
+        }
+
+        if [[ "$_dir" == *"/distributed"* ]] || [[ "$_dir" == *"/distributed" ]]; then
+            # Check that AIU_WORLD_SIZE is set
+            if [[ -z "${AIU_WORLD_SIZE:-}" ]]; then
+                echo "Error: AIU_WORLD_SIZE environment variable is not set" >&2
+                exit 1
+            fi
+            # Use torchrun for distributed tests
+            _NPROC="${AIU_WORLD_SIZE}"
+            echo "[torch_oot_device_tests_run] Running distributed test with torchrun (nproc=$_NPROC)"
+
+            # Set environment variables for split_output.sh
+            export _LOGDIR=/tmp/pytest-torch-spyre-dist
+            export _SHOW_PROGRESS=1
+
+            # Create log directory
+            mkdir -p "${_LOGDIR}"
+
+            # Run with split_output.sh wrapper
+            _run_cmd torchrun --nproc-per-node "$_NPROC" --no-python bash "${_dir}/split_output.sh" python3 -u -m pytest "$_base" "${_args[@]}"
+
+            # Clean up log directory
+            rm -rf "${_LOGDIR}"
+        else
+            echo "[torch_oot_device_tests_run] Running serial test"
+            # Regular pytest for non-distributed tests
+            _run_cmd python3 -m pytest "$_base" "${_args[@]}"
+        fi
     ) || true
 }
 
@@ -1341,29 +1606,34 @@ _run_pytest_isolated() {
 #   $3  original_file -- original source path (logging only)
 #   $4  exit_tmp      -- temp file path for exit code (reused from caller)
 #   $5  shard_xml     -- destination XML path (empty if no --junit-xml)
+#   $6  suite_label   -- YAML label for per-suite accumulation (may be "")
 #   rest              -- extra pytest args (already stripped of --junit-xml)
 #
 # Side-effects:
 #   - Updates global OVERALL_EXIT.
 #   - Injects XML tags into shard_xml when present.
+#   - Accumulates per-suite counts into _SUITE_LABELS/_SUITE_COUNTS.
 # ---------------------------------------------------------------------------
 _run_xdist_fallback() {
-    local _dir="$1" _base="$2" _orig="$3" _exit_tmp="$4" _shard_xml="$5"
-    shift 5
+    local _dir="$1" _base="$2" _orig="$3" _exit_tmp="$4" _shard_xml="$5" _suite_lbl="$6"
+    shift 6
     local _extra=("$@")
 
+    export SPYRE_TEST_FILE="${_dir}/${_base}"
+    export OOT_TEST_FILE="${_dir}/${_base}"
+
     echo ""
-    echo "[spyre_run] *** SIGNAL EXIT — retrying with -n1 (xdist worker isolation) ***"
-    echo "[spyre_run]     File: $_orig"
-    echo "[spyre_run]     Each test runs in its own worker; crashes are contained."
+    echo "[torch_oot_device_tests_run] *** SIGNAL EXIT — retrying with -n1 (xdist worker isolation) ***"
+    echo "[torch_oot_device_tests_run]     File: $_orig"
+    echo "[torch_oot_device_tests_run]     Each test runs in its own worker; crashes are contained."
     echo ""
 
     # Check pytest-xdist is available before proceeding.
     if ! python3 -m pytest --co -q --no-header -p xdist /dev/null &>/dev/null 2>&1; then
         if ! python3 -c "import xdist" 2>/dev/null; then
-            echo "[spyre_run] WARNING: pytest-xdist not installed — cannot use -n1 fallback." >&2
-            echo "[spyre_run]          Install with: pip install pytest-xdist" >&2
-            echo "[spyre_run]          Skipping remaining tests in: $_orig" >&2
+            echo "[torch_oot_device_tests_run] WARNING: pytest-xdist not installed — cannot use -n1 fallback." >&2
+            echo "[torch_oot_device_tests_run]          Install with: pip install pytest-xdist" >&2
+            echo "[torch_oot_device_tests_run]          Skipping remaining tests in: $_orig" >&2
             [[ $OVERALL_EXIT -eq 0 ]] && OVERALL_EXIT=1
             return
         fi
@@ -1372,14 +1642,29 @@ _run_xdist_fallback() {
     local _xdist_args=("-n1" "${_extra[@]+"${_extra[@]}"}")
     [[ -n "$_shard_xml" ]] && _xdist_args+=("--junit-xml=${_shard_xml}")
 
-    _run_pytest_isolated "$_dir" "$_base" "$_exit_tmp" "${_xdist_args[@]}"
+    local _xdist_out_tmp="/tmp/_spyre_xdist_out_${$}_$$.tmp"
+    _run_pytest_isolated "$_dir" "$_base" "$_exit_tmp" "$_xdist_out_tmp" "${_xdist_args[@]}"
 
     local _xexit=139
     if [[ -f "$_exit_tmp" ]]; then
         _xexit=$(< "$_exit_tmp")
         rm -f "$_exit_tmp"
     else
-        echo "[spyre_run] WARNING: xdist fallback subshell exited abnormally for $_orig" >&2
+        echo "[torch_oot_device_tests_run] WARNING: xdist fallback subshell exited abnormally for $_orig" >&2
+    fi
+
+    # Accumulate per-suite counts from xdist output (multi-config only).
+    if [[ ${#YAML_CONFIGS[@]} -ge 2 && -n "$_suite_lbl" && -f "$_xdist_out_tmp" ]]; then
+        read -r _sp _sf _se _ss _sxf _sxp _st <<< "$(_parse_pytest_summary_line "$_xdist_out_tmp")"
+        _add_suite_counts "$_suite_lbl" "${_sp:-0}" "${_sf:-0}" "${_se:-0}" "${_ss:-0}" "${_sxf:-0}" "${_sxp:-0}" "${_st:-0}"
+    fi
+    rm -f "$_xdist_out_tmp"
+
+    # Propagate test failures from the xdist fallback run.
+    if [[ $_xexit -eq 1 ]]; then
+        [[ $OVERALL_EXIT -eq 0 ]] && OVERALL_EXIT=1
+    elif [[ $_xexit -ne 0 && $_xexit -ne 5 ]]; then
+        OVERALL_EXIT=$_xexit
     fi
 
     # Inject XML tags into the shard produced by the xdist run.
@@ -1387,6 +1672,452 @@ _run_xdist_fallback() {
         python3 -c "$_XML_INJECT_PY" "$_shard_xml" "$YAML_CONFIG" || true
     fi
 }
+
+# ---------------------------------------------------------------------------
+# _detect_spyre_card_count
+#
+# Returns the number of physical Spyre cards visible to this process.
+#
+# Detection order (first non-zero result gets the priority):
+#   1. PCIDEVICE_IBM_COM_AIU_PF: contains a comma-separated list of PCI bus IDs per card.
+#      Card count = number of commas + 1.
+#   2. torch.spyre.device_count(): runtime query via the flex driver.
+#      Respects the AIU_WORLD_SIZE / SPYRE_DEVICES if already set, so we clear
+#      those for the probe to get the raw hardware count.
+#   3. Falls back to 1 (serial) if neither source yields > 0.
+#
+# ---------------------------------------------------------------------------
+_detect_spyre_card_count() {
+    # PCIDEVICE_IBM_COM_AIU_PF
+    if [[ -n "${PCIDEVICE_IBM_COM_AIU_PF:-}" ]]; then
+        local _ids="${PCIDEVICE_IBM_COM_AIU_PF//[^,]/}"   # keep only commas
+        echo $(( ${#_ids} + 1 ))
+        return
+    fi
+
+    # Alternately torch.spyre.device_count() without any env overrides
+    local _count
+    _count=$(
+        env -u AIU_WORLD_SIZE -u SPYRE_DEVICES \
+        python3 -c "
+import torch_spyre, torch
+try:
+    print(torch.spyre.device_count())
+except Exception:
+    print(0)
+" 2>/dev/null
+    ) || true
+    if [[ "$_count" =~ ^[0-9]+$ && "$_count" -gt 0 ]]; then
+        echo "$_count"
+        return
+    fi
+
+    # Fallback: single card serial
+    echo 1
+}
+
+# ---------------------------------------------------------------------------
+# _run_parallel_across_cards
+#
+# Collects every test node ID from ALL resolved files, distributes them
+# round-robin across N Spyre cards, and runs each card's slice in a
+# background subshell with SPYRE_DEVICES=<card_idx>.
+#
+# Splitting at the test-ID level (not the file level) is essential: when
+# multiple configs share a single test file (e.g. all inductor shard configs
+# point to test_inductor_ops.py), merging reduces RUN_FILES to one entry.
+# File-level round-robin would assign everything to card 0.  Test-level
+# round-robin splits individual test cases across cards regardless of how
+# many files there are.
+#
+# Collection uses `pytest --collect-only -q` run from the file's directory
+# so conftest.py and SPYRE_TEST_FILE / OOT_TEST_FILE are set up identically
+# to a real run.  Collection is done without SPYRE_DEVICES so the runtime
+# is not loaded.
+#
+# Globals read:   RUN_FILES TEST_FILES _EXTRA_NO_XML _FINAL_XML_PATH
+#                 YAML_CONFIG _XML_INJECT_PY
+# Globals written: _XML_SHARDS OVERALL_EXIT
+# ---------------------------------------------------------------------------
+_run_parallel_across_cards() {
+    local _n_cards="$1"
+
+    echo ""
+    echo "[torch_oot_device_tests_run_parallel] --parallel: collecting test IDs from ${#RUN_FILES[@]} file(s) to distribute across ${_n_cards} card(s)..."
+
+    # -----------------------------------------------------------------------
+    # Step 1: collect all test node IDs across every resolved file.
+    #
+    # Output of `pytest --collect-only -q` looks like:
+    #   TestOpsPRIVATEUSE1::test_add_spyre_float16
+    #   TestOpsPRIVATEUSE1::test_bmm_spyre_float16
+    #   ...
+    #   <N> tests collected
+    #
+    # We keep only lines that contain "::" (node IDs), discarding the
+    # summary line and any warnings.
+    #
+    # Per-file collection is done with SPYRE_TEST_FILE set (so the OOT
+    # framework can identify the config) but without SPYRE_DEVICES / hardware
+    # initialisation so collection is fast even on a login node.
+    # -----------------------------------------------------------------------
+    # _all_node_ids: parallel arrays — node_id, file_idx (into RUN_FILES)
+    local -a _all_node_ids=()
+    local -a _all_node_file_idx=()
+
+    for i in "${!RUN_FILES[@]}"; do
+        local _rf="${RUN_FILES[$i]}"
+        local _of="${TEST_FILES[$i]}"
+        local _rd _rb
+        _rd="$(dirname "$_rf")"
+        _rb="$(basename "$_rf")"
+
+        echo "[torch_oot_device_tests_run]   collecting: $(basename "$_of")"
+
+        # Build the -m probe args (same as serial path).
+        local -a _collect_args=()
+        local _has_m=0
+        for _a in "${_EXTRA_NO_XML[@]+"${_EXTRA_NO_XML[@]}"}"; do
+            [[ "$_a" == "-m" ]] && { _has_m=1; break; }
+        done
+        if [[ $_has_m -eq 1 ]]; then
+            local _take_next=0
+            for _a in "${_EXTRA_NO_XML[@]+"${_EXTRA_NO_XML[@]}"}"; do
+                if [[ $_take_next -eq 1 ]]; then
+                    _collect_args+=("$_a"); _take_next=0; continue
+                fi
+                [[ "$_a" == "-m" ]] && { _collect_args+=("$_a"); _take_next=1; }
+            done
+        fi
+
+        local _raw_ids
+        _raw_ids=$(
+            export SPYRE_TEST_FILE="$_rf"
+            export OOT_TEST_FILE="$_rf"
+            cd "$_rd" && python3 -m pytest "$_rb" \
+                "${_collect_args[@]+"${_collect_args[@]}"}" \
+                --collect-only -q --no-header 2>/dev/null \
+            | grep '\.py::' || true
+        )
+
+        if [[ -z "$_raw_ids" ]]; then
+            echo "[torch_oot_device_tests_run_serial]   WARNING: no test IDs collected from $(basename "$_of") -- it will be skipped in parallel mode." >&2
+            continue
+        fi
+
+        while IFS= read -r _id; do
+            [[ -z "$_id" ]] && continue
+            # Strip any leading directory path from the file component so IDs
+            # are always in the form  basename.py::Class::method.
+            # pytest --collect-only outputs paths relative to rootdir (set by
+            # pyproject.toml), not relative to cwd, e.g.:
+            #   tests/inductor/test_inductor_ops__oot_wrapper.py::Class::method
+            # We run pytest from run_dir so we need just:
+            #   test_inductor_ops__oot_wrapper.py::Class::method
+            local _file_part _rest
+            _file_part="${_id%%::*}"          # everything before first ::
+            _rest="${_id#*::}"                # everything after first ::
+            _file_part="${_file_part##*/}"    # strip directory — keep basename
+            _id="${_file_part}::${_rest}"
+            _all_node_ids+=("$_id")
+            _all_node_file_idx+=("$i")
+        done <<< "$_raw_ids"
+    done
+
+    local _total="${#_all_node_ids[@]}"
+    if [[ $_total -eq 0 ]]; then
+        echo "[torch_oot_device_tests_run_warning] WARNING: no test IDs collected across all files -- nothing to run." >&2
+        return
+    fi
+
+    echo "[torch_oot_device_tests_run]   total test IDs collected: ${_total}"
+    echo ""
+
+    # -----------------------------------------------------------------------
+    # Step 2: distribute node IDs round-robin across cards.
+    #
+    # Each card gets a temp file listing its assigned node IDs, one per line,
+    # prefixed by the file index so the subshell knows which RUN_FILES entry
+    # to reference (for run_dir, SPYRE_TEST_FILE, shard XML naming, etc.).
+    # Format per line:  <file_idx>:<node_id>
+    # -----------------------------------------------------------------------
+    local -a _card_id_files=()
+    local _k
+    for (( _k=0; _k<_n_cards; _k++ )); do
+        local _f="/tmp/_spyre_card_ids_${$}_${_k}.tmp"
+        : > "$_f"
+        _card_id_files+=("$_f")
+    done
+
+    for (( j=0; j<_total; j++ )); do
+        _k=$(( j % _n_cards ))
+        echo "${_all_node_file_idx[$j]}:${_all_node_ids[$j]}" >> "${_card_id_files[$_k]}"
+    done
+
+    # Print the assignment summary.
+    for (( _k=0; _k<_n_cards; _k++ )); do
+        local _cnt
+        _cnt=$(wc -l < "${_card_id_files[$_k]}" 2>/dev/null || echo 0)
+        _cnt="${_cnt// /}"   # trim whitespace
+        echo "[torch_oot_device_tests_run_parallel_info]   card ${_k} (SPYRE_DEVICES=${_k}): ${_cnt} test(s)"
+    done
+    echo ""
+
+    # -----------------------------------------------------------------------
+    # Step 3: launch one background subshell per card.
+    #
+    # Each subshell groups its assigned node IDs by file index, then runs one
+    # pytest invocation per file (passing only that card's node IDs as
+    # positional args).
+    # -----------------------------------------------------------------------
+    local -a _card_pids=()
+    local -a _card_exit_files=()
+    local -a _card_shard_list_files=()
+    local -a _card_counts_files=()
+
+    for (( _k=0; _k<_n_cards; _k++ )); do
+        local _card_exit_tmp="/tmp/_spyre_card_exit_${$}_${_k}.tmp"
+        local _card_shard_list="/tmp/_spyre_card_shards_${$}_${_k}.tmp"
+        local _card_counts_file="/tmp/_spyre_card_counts_${$}_${_k}.tmp"
+        _card_exit_files+=("$_card_exit_tmp")
+        _card_shard_list_files+=("$_card_shard_list")
+        _card_counts_files+=("$_card_counts_file")
+        : > "$_card_shard_list"
+        : > "$_card_counts_file"
+
+        local _subshell_card="$_k"
+        local _subshell_id_file="${_card_id_files[$_k]}"
+        local _subshell_exit_tmp="$_card_exit_tmp"
+        local _subshell_shard_list="$_card_shard_list"
+        local _subshell_counts_file="$_card_counts_file"
+
+        (
+            set +euo pipefail
+            export SPYRE_DEVICES="${_subshell_card}"
+            # Isolate the Inductor / FxGraph cache per card so that concurrent
+            # shutil.rmtree() calls from FxGraphCache.clear() in different card
+            # subshells do not race on the same /tmp/torchinductor_*/fxgraph/
+            # directory (OSError ENOTEMPTY).
+            _base_cache="${TORCHINDUCTOR_CACHE_DIR:-/tmp/torchinductor_${USER:-$(id -un)}}"
+            export TORCHINDUCTOR_CACHE_DIR="${_base_cache}__card_${_subshell_card}"
+            local _card_overall=0
+
+            # Group the assigned lines by file index using an associative array.
+            # Keys are file indices; values are newline-separated node IDs.
+            declare -A _file_to_ids=()
+            declare -a _file_order=()   # preserve first-seen order
+            while IFS=: read -r _fidx _nid; do
+                [[ -z "$_fidx" ]] && continue
+                if [[ -z "${_file_to_ids[$_fidx]+set}" ]]; then
+                    _file_order+=("$_fidx")
+                    _file_to_ids[$_fidx]=""
+                fi
+                _file_to_ids[$_fidx]+="${_nid}"$'\n'
+            done < "$_subshell_id_file"
+
+            for _fidx in "${_file_order[@]}"; do
+                local run_file="${RUN_FILES[$_fidx]}"
+                local original_file="${TEST_FILES[$_fidx]}"
+                local run_dir run_basename
+                run_dir="$(dirname "$run_file")"
+                run_basename="$(basename "$run_file")"
+
+                # Convert the newline-separated ID block to an array.
+                local -a _node_ids=()
+                while IFS= read -r _nid; do
+                    [[ -n "$_nid" ]] && _node_ids+=("$_nid")
+                done <<< "${_file_to_ids[$_fidx]}"
+
+                echo "========================================================================"
+                echo "[torch_oot_device_tests_run] card ${_subshell_card} | SPYRE_DEVICES=${_subshell_card} | ${#_node_ids[@]} test(s)"
+                if [[ "$run_file" != "$original_file" ]]; then
+                    echo "[torch_oot_device_tests_run] Running (via OOT wrapper): $original_file"
+                else
+                    echo "[torch_oot_device_tests_run] Running: $run_file"
+                fi
+                echo "========================================================================"
+
+                # Shard XML path — card+file namespaced.
+                local _shard_xml=""
+                if [[ -n "$_FINAL_XML_PATH" ]]; then
+                    _shard_xml="${_FINAL_XML_PATH%.xml}__card_${_subshell_card}__shard_${_fidx}.xml"
+                    echo "$_shard_xml" >> "$_subshell_shard_list"
+                fi
+
+                # Build pytest args: base args + node IDs as positional args.
+                # Node IDs are passed as bare names (no file prefix) because
+                # pytest is invoked from run_dir with run_basename as the target.
+                local -a _file_args
+                if [[ -n "$_shard_xml" ]]; then
+                    _file_args=("${_EXTRA_NO_XML[@]+"${_EXTRA_NO_XML[@]}"}" "--junit-xml=${_shard_xml}")
+                else
+                    _file_args=("${_EXTRA_NO_XML[@]+"${_EXTRA_NO_XML[@]}"}")
+                fi
+
+                export SPYRE_TEST_FILE="$run_file"
+                export OOT_TEST_FILE="$run_file"
+
+                local _exit_tmp="/tmp/_spyre_pytest_exit_${$}_card${_subshell_card}_${_fidx}.tmp"
+
+                # Run pytest with this card's node IDs appended after the file.
+                # _run_pytest_isolated runs `python3 -m pytest <basename> <args...>`;
+                # we append the node IDs as deselect-safe extra positional args via
+                # the args list: pytest file.py::TestClass::test_foo ... works when
+                # each ID is a full node ID string.
+                # However _run_pytest_isolated prefixes run_basename itself, so we
+                # pass the IDs as additional pytest args (pytest accepts them as
+                # node-ID filters when they contain "::").
+                # Node IDs are already normalised to basename::Class::method by
+                # the collection step above.  Pass them directly as pytest
+                # collection targets (run from run_dir).
+                local -a _id_args=("${_node_ids[@]}")
+                local _par_out_tmp="/tmp/_spyre_par_out_${$}_card${_subshell_card}_${_fidx}.tmp"
+                # Run pytest with this card's node IDs as the collection targets
+                # instead of the bare filename so only this card's slice runs.
+                (
+                    set +euo pipefail
+                    cd "$run_dir"
+                    python3 -m pytest "${_id_args[@]}" "${_file_args[@]}" 2>&1 | tee "$_par_out_tmp"
+                    echo "${PIPESTATUS[0]}" > "$_exit_tmp"
+                ) || true
+
+                local _exit=0
+                if [[ -f "$_exit_tmp" ]]; then
+                    _exit=$(< "$_exit_tmp")
+                    rm -f "$_exit_tmp"
+                else
+                    _exit=139
+                    echo "[torch_oot_device_tests_run] ERROR: pytest subshell exited abnormally for $original_file" >&2
+                fi
+
+                # Accumulate per-suite counts (multi-config only, clean runs).
+                if [[ ${#YAML_CONFIGS[@]} -ge 2 && -f "$_par_out_tmp" && $_exit -lt 128 ]]; then
+                    _p_suite_label="${_FILE_YAML_LABEL[$_fidx]:-unknown}"
+                    read -r _sp _sf _se _ss _sxf _sxp _st <<< "$(_parse_pytest_summary_line "$_par_out_tmp")"
+                    echo "${_p_suite_label} ${_sp:-0} ${_sf:-0} ${_se:-0} ${_ss:-0} ${_sxf:-0} ${_sxp:-0} ${_st:-0}" >> "$_subshell_counts_file"
+                fi
+                rm -f "$_par_out_tmp"
+
+                # XML tag injection for clean runs.
+                if [[ -n "$_shard_xml" && -f "$_shard_xml" && $_exit -lt 128 ]]; then
+                    python3 -c "$_XML_INJECT_PY" "$_shard_xml" "$YAML_CONFIG" || true
+                fi
+
+                # Exit-code handling.
+                case $_exit in
+                    0) ;;
+                    1)  [[ $_card_overall -eq 0 ]] && _card_overall=1 ;;
+                    5)  echo "[torch_oot_device_tests_run] WARNING: no tests collected for card ${_subshell_card} slice of $(basename "$original_file")" >&2 ;;
+                    127)
+                        echo "[torch_oot_device_tests_run_err] FATAL: python3/pytest not found for $original_file" >&2
+                        _card_overall=$_exit ;;
+                    130)
+                        echo "[torch_oot_device_tests_run_err] FATAL: interrupted (card ${_subshell_card}) -- aborting." >&2
+                        _card_overall=$_exit
+                        break ;;
+                    *)
+                        # Signal exit — retry the card's slice with -n1 xdist.
+                        echo "[torch_oot_device_tests_run] WARNING: pytest exited with signal (code $_exit) on card ${_subshell_card}" >&2
+                        if python3 -c "import xdist" 2>/dev/null; then
+                            local -a _xdist_args=("-n1" "${_file_args[@]+"${_file_args[@]}"}")
+                            local _xdist_par_out="/tmp/_spyre_par_xdist_out_${$}_card${_subshell_card}_${_fidx}.tmp"
+                            (
+                                set +euo pipefail
+                                cd "$run_dir"
+                                python3 -m pytest "${_id_args[@]}" "${_xdist_args[@]}" 2>&1 | tee "$_xdist_par_out"
+                                echo "${PIPESTATUS[0]}" > "$_exit_tmp"
+                            ) || true
+                            if [[ -f "$_exit_tmp" ]]; then
+                                local _xexit; _xexit=$(< "$_exit_tmp"); rm -f "$_exit_tmp"
+                                [[ $_xexit -ne 0 && $_xexit -ne 5 && $_card_overall -eq 0 ]] && _card_overall=$_xexit
+                                if [[ -n "$_shard_xml" && -f "$_shard_xml" ]]; then
+                                    python3 -c "$_XML_INJECT_PY" "$_shard_xml" "$YAML_CONFIG" || true
+                                fi
+                                # Accumulate counts from xdist retry output.
+                                if [[ ${#YAML_CONFIGS[@]} -ge 2 && -f "$_xdist_par_out" ]]; then
+                                    _p_suite_label="${_FILE_YAML_LABEL[$_fidx]:-unknown}"
+                                    read -r _sp _sf _se _ss _sxf _sxp _st <<< "$(_parse_pytest_summary_line "$_xdist_par_out")"
+                                    echo "${_p_suite_label} ${_sp:-0} ${_sf:-0} ${_se:-0} ${_ss:-0} ${_sxf:-0} ${_sxp:-0} ${_st:-0}" >> "$_subshell_counts_file"
+                                fi
+                            fi
+                            rm -f "$_xdist_par_out"
+                        else
+                            echo "[torch_oot_device_tests_run] WARNING: pytest-xdist not installed — skipping xdist fallback for card ${_subshell_card}." >&2
+                            [[ $_card_overall -eq 0 ]] && _card_overall=1
+                        fi
+                        ;;
+                esac
+            done
+
+            echo "$_card_overall" > "$_subshell_exit_tmp"
+        ) &
+
+        _card_pids+=($!)
+    done
+
+    # -----------------------------------------------------------------------
+    # Step 4: wait for all card subshells; collect exit codes and XML shards.
+    # -----------------------------------------------------------------------
+    echo "[torch_oot_device_tests_run] Waiting for all card jobs to finish..."
+    for (( _k=0; _k<_n_cards; _k++ )); do
+        wait "${_card_pids[$_k]}" || true
+
+        local _card_exit=0
+        local _exit_file="${_card_exit_files[$_k]}"
+        if [[ -f "$_exit_file" ]]; then
+            _card_exit=$(< "$_exit_file")
+            rm -f "$_exit_file"
+        else
+            _card_exit=1
+            echo "[torch_oot_device_tests_run] WARNING: card ${_k} did not write an exit code." >&2
+        fi
+        echo "[torch_oot_device_tests_run] card ${_k} finished with exit code: ${_card_exit}"
+
+        case $_card_exit in
+            0) ;;
+            1)   [[ $OVERALL_EXIT -eq 0 ]] && OVERALL_EXIT=1 ;;
+            5)   : ;;
+            *)   OVERALL_EXIT=$_card_exit ;;
+        esac
+
+        local _shard_list="${_card_shard_list_files[$_k]}"
+        if [[ -f "$_shard_list" ]]; then
+            while IFS= read -r _s; do
+                [[ -n "$_s" ]] && _XML_SHARDS+=("$_s")
+            done < "$_shard_list"
+            rm -f "$_shard_list"
+        fi
+
+        # Read per-suite counts written by the card subshell.
+        local _counts_file="${_card_counts_files[$_k]}"
+        if [[ -f "$_counts_file" ]]; then
+            while IFS= read -r _cline; do
+                [[ -z "$_cline" ]] && continue
+                read -r _clbl _cp _cf _ce _cs _cxf _cxp _ct <<< "$_cline"
+                _add_suite_counts "$_clbl" "${_cp:-0}" "${_cf:-0}" "${_ce:-0}" "${_cs:-0}" "${_cxf:-0}" "${_cxp:-0}" "${_ct:-0}"
+            done < "$_counts_file"
+            rm -f "$_counts_file"
+        fi
+
+        rm -f "${_card_id_files[$_k]}"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# 13. Parallel or serial execution
+# ---------------------------------------------------------------------------
+if [[ $_PARALLEL -eq 1 ]]; then
+    _N_CARDS=$(_detect_spyre_card_count)
+    echo "[torch_oot_device_tests_run_info] Detected ${_N_CARDS} Spyre card(s)."
+    if [[ $_N_CARDS -le 1 ]]; then
+        echo "[torch_oot_device_tests_run] Only 1 card detected --> falling back to serial execution."
+        _PARALLEL=0
+    fi
+fi
+
+if [[ $_PARALLEL -eq 1 ]]; then
+    _run_parallel_across_cards "$_N_CARDS"
+else
 
 for i in "${!RUN_FILES[@]}"; do
     run_file="${RUN_FILES[$i]}"
@@ -1396,9 +2127,9 @@ for i in "${!RUN_FILES[@]}"; do
 
     echo "========================================================================"
     if [[ "$run_file" != "$original_file" ]]; then
-        echo "[spyre_run] Running (via OOT wrapper): $original_file"
+        echo "[torch_oot_device_tests_run] Running (via OOT wrapper): $original_file"
     else
-        echo "[spyre_run] Running: $run_file"
+        echo "[torch_oot_device_tests_run] Running: $run_file"
     fi
     echo "========================================================================"
 
@@ -1458,7 +2189,7 @@ for i in "${!RUN_FILES[@]}"; do
 
         if [[ $_probe_exit -eq 5 ]]; then
             # 0 tests match this marker in this file — strip -m from args.
-            echo "[spyre_run] -m filter matched 0 tests in $(basename "$original_file"), running without -m" >&2
+            echo "[torch_oot_device_tests_run] -m filter matched 0 tests in $(basename "$original_file"), running without -m" >&2
             _ARGS_NO_M=()
             _skip_m=0
             for _a in "${_FILE_PYTEST_ARGS[@]+"${_FILE_PYTEST_ARGS[@]}"}"; do
@@ -1486,11 +2217,13 @@ for i in "${!RUN_FILES[@]}"; do
     # invocations of run_test.sh.
     # -----------------------------------------------------------------------
     export SPYRE_TEST_FILE="$run_file"
+    export OOT_TEST_FILE="$run_file"
 
     _EXIT_TMP="/tmp/_spyre_pytest_exit_${$}_${i}.tmp"
+    _OUT_TMP="/tmp/_spyre_pytest_out_${$}_${i}.tmp"
     _exit=0
 
-    _run_pytest_isolated "$run_dir" "$run_basename" "$_EXIT_TMP" "${_FILE_PYTEST_ARGS[@]}"
+    _run_pytest_isolated "$run_dir" "$run_basename" "$_EXIT_TMP" "$_OUT_TMP" "${_FILE_PYTEST_ARGS[@]}"
 
     if [[ -f "$_EXIT_TMP" ]]; then
         _exit=$(< "$_EXIT_TMP")
@@ -1498,8 +2231,16 @@ for i in "${!RUN_FILES[@]}"; do
     else
         # Subshell died before writing the exit code (segfault, OOM, SIGKILL).
         _exit=139
-        echo "[spyre_run] ERROR: pytest subshell exited abnormally (segfault or signal?) for $original_file" >&2
+        echo "[torch_oot_device_tests_run] ERROR: pytest subshell exited abnormally (segfault or signal?) for $original_file" >&2
     fi
+
+    # Accumulate per-suite counts from pytest terminal output (multi-config only).
+    if [[ ${#YAML_CONFIGS[@]} -ge 2 && -f "$_OUT_TMP" && $_exit -lt 128 ]]; then
+        _suite_label="${_FILE_YAML_LABEL[$i]:-unknown}"
+        read -r _sp _sf _se _ss _sxf _sxp _st <<< "$(_parse_pytest_summary_line "$_OUT_TMP")"
+        _add_suite_counts "$_suite_label" "${_sp:-0}" "${_sf:-0}" "${_se:-0}" "${_ss:-0}" "${_sxf:-0}" "${_sxp:-0}" "${_st:-0}"
+    fi
+    rm -f "$_OUT_TMP"
 
     # Post-process XML to inject YAML tags as <properties>.
     # Only do this for a clean or test-failure run (not for signal exits that
@@ -1512,26 +2253,32 @@ for i in "${!RUN_FILES[@]}"; do
     # Exit code handling
     #
     #   0   = all tests passed
-    #   1   = tests ran, some failed/errored  (reported by pytest; non-fatal)
-    #   5   = no tests collected              (warning only)
+    #   1   = tests ran, some failed/errored  (propagated → OVERALL_EXIT=1)
+    #   5   = no tests collected              (warning only; does not fail run)
     #   127 = command not found (python3/pytest missing) — fatal
     #   128+= signal/abnormal termination    — retry with -n1 (xdist fallback)
     #         Common: 139 (SIGSEGV), 255 (C abort).  130 (Ctrl-C) breaks loop.
     # -----------------------------------------------------------------------
     case $_exit in
-        0|1|5)
-            # Normal pytest outcomes (tests ran, some may have failed/xpassed).
-            # Individual results are visible in pytest output; run_test.sh
-            # always exits 0 for these so CI sees the report rather than a
-            # blanket failure.  Signal exits (>= 128) are the only codes that
-            # trigger the xdist fallback and propagate a non-zero exit.
+        0)
+            # All tests passed.
+            ;;
+        1)
+            # Some tests failed or errored — pytest already reported them.
+            # Propagate so CI marks the job as failed when mandatory_success
+            # tests do not pass.
+            [[ $OVERALL_EXIT -eq 0 ]] && OVERALL_EXIT=1
+            ;;
+        5)
+            # No tests collected — warn but do not fail the overall run.
+            echo "[torch_oot_device_tests_run] WARNING: no tests collected for $original_file" >&2
             ;;
         127)
-            echo "[spyre_run] FATAL: python3 or pytest not found (exit 127) for $original_file" >&2
+            echo "[torch_oot_device_tests_run] FATAL: python3 or pytest not found (exit 127) for $original_file" >&2
             OVERALL_EXIT=$_exit
             ;;
         130)
-            echo "[spyre_run] FATAL: interrupted (exit 130) — aborting run." >&2
+            echo "[torch_oot_device_tests_run] FATAL: interrupted (exit 130) — aborting run." >&2
             OVERALL_EXIT=$_exit
             # Propagate immediately; no point continuing after Ctrl-C.
             break
@@ -1543,7 +2290,7 @@ for i in "${!RUN_FILES[@]}"; do
             # worker is caught by the xdist controller and the remaining tests
             # continue.  --collect-only is not used: the same process that crashes
             # during execution often also crashes during collection.
-            echo "[spyre_run] WARNING: pytest exited with signal (code $_exit) for $original_file" >&2
+            echo "[torch_oot_device_tests_run] WARNING: pytest exited with signal (code $_exit) for $original_file" >&2
 
             # Strip --junit-xml from _FILE_PYTEST_ARGS; _run_xdist_fallback
             # re-adds _SHARD_XML itself so it owns the XML output path.
@@ -1561,12 +2308,15 @@ for i in "${!RUN_FILES[@]}"; do
             _run_xdist_fallback \
                 "$run_dir" "$run_basename" "$original_file" \
                 "$_EXIT_TMP" "$_SHARD_XML" \
+                "${_FILE_YAML_LABEL[$i]:-unknown}" \
                 "${_FALLBACK_ARGS[@]+"${_FALLBACK_ARGS[@]}"}"
 
             # OVERALL_EXIT updated inside _run_xdist_fallback.
             ;;
     esac
 done
+
+fi  # end of serial-vs-parallel branch
 
 # ---------------------------------------------------------------------------
 # Merge all XML shards into the final output path requested by the caller.
@@ -1580,7 +2330,7 @@ if [[ -n "$_FINAL_XML_PATH" && ${#_XML_SHARDS[@]} -gt 0 ]]; then
     if [[ ${#_existing_shards[@]} -eq 1 ]]; then
         # Single file run: just rename the shard, no merge needed.
         mv "${_existing_shards[0]}" "$_FINAL_XML_PATH"
-        echo "[spyre_run] Single XML shard moved to: $_FINAL_XML_PATH"
+        echo "[torch_oot_device_tests_run] Single XML shard moved to: $_FINAL_XML_PATH"
     elif [[ ${#_existing_shards[@]} -gt 1 ]]; then
         python3 -c "$_XML_MERGE_PY" "$_FINAL_XML_PATH" "${_existing_shards[@]}" || true
         # Clean up shards after successful merge.
@@ -1588,10 +2338,60 @@ if [[ -n "$_FINAL_XML_PATH" && ${#_XML_SHARDS[@]} -gt 0 ]]; then
             rm -f "$_s"
         done
     else
-        echo "[spyre_run] WARNING: No XML shards found to merge." >&2
+        echo "[torch_oot_device_tests_run] WARNING: No XML shards found to merge." >&2
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Per-suite (per-YAML) result summary — printed when >= 2 YAMLs were given.
+# Counts come from pytest's own terminal output, parsed by
+# _parse_pytest_summary_line and accumulated in _SUITE_LABELS/_SUITE_COUNTS.
+# ---------------------------------------------------------------------------
+if [[ ${#YAML_CONFIGS[@]} -ge 2 ]]; then
+    echo ""
+    echo "========================================================================"
+    echo "[torch_oot_device_tests_run] Per-suite result summary:"
+    echo "========================================================================"
+    if [[ ${#_SUITE_LABELS[@]} -eq 0 ]]; then
+        # No counts (no runs completed or all signal-crashed before tee).
+        # Fall back to listing known labels.
+        _seen_labels=()
+        for _fi in "${!TEST_FILES[@]}"; do
+            _lbl="${_FILE_YAML_LABEL[$_fi]:-unknown}"
+            _already=0
+            for _sl in "${_seen_labels[@]+"${_seen_labels[@]}"}"; do
+                [[ "$_sl" == "$_lbl" ]] && { _already=1; break; }
+            done
+            [[ $_already -eq 0 ]] && _seen_labels+=("$_lbl")
+        done
+        for _lbl in "${_seen_labels[@]}"; do
+            printf "  %-52s  (no results)\n" "$_lbl"
+        done
+    else
+        for _ci in "${!_SUITE_LABELS[@]}"; do
+            _lbl="${_SUITE_LABELS[$_ci]}"
+            read -r _cp _cf _ce _cs _cxf _cxp _ct <<< "${_SUITE_COUNTS[$_ci]}"
+            _parts=()
+            [[ "${_cp:-0}"  -gt 0 ]] && _parts+=("${_cp} passed")
+            [[ "${_cf:-0}"  -gt 0 ]] && _parts+=("${_cf} failed")
+            [[ "${_ce:-0}"  -gt 0 ]] && _parts+=("${_ce} error")
+            [[ "${_cs:-0}"  -gt 0 ]] && _parts+=("${_cs} skipped")
+            [[ "${_cxf:-0}" -gt 0 ]] && _parts+=("${_cxf} xfailed")
+            [[ "${_cxp:-0}" -gt 0 ]] && _parts+=("${_cxp} xpassed")
+            if [[ ${#_parts[@]} -eq 0 ]]; then
+                _summary="0 tests"
+            else
+                _summary="$(IFS=', '; echo "${_parts[*]}")"
+            fi
+            if [[ -n "${_ct:-}" && "$_ct" != "0" ]]; then
+                _summary="${_summary} in ${_ct}s"
+            fi
+            printf "  %-52s  %s\n" "$_lbl" "$_summary"
+        done
+    fi
+    echo "========================================================================"
+fi
+
 echo ""
-echo "[spyre_run] Done. Overall exit code: $OVERALL_EXIT"
+echo "[torch_oot_device_tests_run] Done. Overall exit code: $OVERALL_EXIT"
 exit $OVERALL_EXIT

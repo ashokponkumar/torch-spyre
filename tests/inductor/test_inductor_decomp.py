@@ -27,7 +27,12 @@ FP16_EPS = torch.finfo(torch.float16).eps  # 0.0009765625
 
 
 class TestOps(unittest.TestCase, metaclass=ParameterizedTestMeta):
-    torch.manual_seed(0xAFFE)
+    torch.manual_seed(0xAFFE)  # seeds cached_randn/cached_xavier calls in PARAMS below
+
+    def setUp(self):
+        super().setUp()
+        torch.manual_seed(0xAFFE)
+
     # Define parameter sets for each base test method
     # If parameterized, the base test method will not be invoked
     # The test methods that are not parameterized will be invoked
@@ -319,6 +324,14 @@ class <lambda>(torch.nn.Module):
             # Verify the result matches the custom decomposition (mul, not add)
             expected = torch.mul(x, y)
             torch.testing.assert_close(out.cpu(), expected.cpu())
+
+    def test_bool_amax_amin(self):
+        """Test amax/amin on boolean tensors"""
+        x = torch.randint(low=0, high=2, size=(256, 256)).to(torch.bool)
+
+        # Test amax and amin
+        compare_with_cpu(lambda a: torch.amax(a), x)
+        compare_with_cpu(lambda a: torch.amin(a), x)
 
 
 if __name__ == "__main__":
