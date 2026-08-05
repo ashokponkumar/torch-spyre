@@ -227,22 +227,23 @@ def parse_benchmark_xml(xml_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def insert_benchmark_run(client, run_id: int, run_meta: dict) -> None:
+def insert_benchmark_run(client, run_id: int, results_id: str, run_meta: dict) -> None:
     client.insert(
         "benchmark_runs",
         [
             [
                 run_id,
+                results_id,
                 run_meta["source_file"],
                 run_meta.get("version_info"),
                 run_meta["created_at"].replace(tzinfo=None),
             ]
         ],
-        column_names=["run_id", "source_file", "version_info", "created_at"],
+        column_names=["run_id", "results_id", "source_file", "version_info", "created_at"],
     )
 
 
-def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
+def insert_perf_benchmarks(client, results_id: str, benchmarks: list[dict]) -> None:
     if not benchmarks:
         return
     client.insert(
@@ -250,7 +251,7 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
         [
             [
                 b["benchmark_id"],
-                run_id,
+                results_id,
                 b["record_type"],
                 b["operation_name"],
                 b["config_name"],
@@ -273,7 +274,7 @@ def insert_perf_benchmarks(client, run_id: int, benchmarks: list[dict]) -> None:
         ],
         column_names=[
             "benchmark_id",
-            "run_id",
+            "results_id",
             "record_type",
             "operation_name",
             "config_name",
@@ -473,12 +474,12 @@ def get_client():
     )
 
 
-def insert_run(client, run_id: str, run: dict, args):
+def insert_run(client, results_id: str, run: dict, args):
     client.insert(
         "test_runs",
         [
             [
-                run_id,
+                results_id,
                 args.workflow,
                 run["suite_name"],
                 run["filename"],
@@ -500,7 +501,7 @@ def insert_run(client, run_id: str, run: dict, args):
             ]
         ],
         column_names=[
-            "run_id",
+            "results_id",
             "workflow",
             "suite_name",
             "filename",
@@ -523,14 +524,14 @@ def insert_run(client, run_id: str, run: dict, args):
     )
 
 
-def insert_cases(client, run_id: str, cases: list[dict], workflow: str = ""):
+def insert_cases(client, results_id: str, cases: list[dict], workflow: str = ""):
     if not cases:
         return
     client.insert(
         "test_cases",
         [
             [
-                run_id,
+                results_id,
                 c["case_id"],
                 c["classname"],
                 c["name"],
@@ -545,7 +546,7 @@ def insert_cases(client, run_id: str, cases: list[dict], workflow: str = ""):
             for c in cases
         ],
         column_names=[
-            "run_id",
+            "results_id",
             "case_id",
             "classname",
             "name",
@@ -560,10 +561,10 @@ def insert_cases(client, run_id: str, cases: list[dict], workflow: str = ""):
     )
 
 
-def insert_properties(client, run_id: str, cases: list[dict]):
+def insert_properties(client, results_id: str, cases: list[dict]):
     rows = [
         {
-            "run_id": run_id,
+            "results_id": results_id,
             "case_id": c["case_id"],
             "prop_name": pname,
             "prop_value": pvalue,
@@ -577,7 +578,7 @@ def insert_properties(client, run_id: str, cases: list[dict]):
             "run_properties",
             [
                 [
-                    r["run_id"],
+                    r["results_id"],
                     r["case_id"],
                     r["prop_name"],
                     r["prop_value"],
@@ -586,7 +587,7 @@ def insert_properties(client, run_id: str, cases: list[dict]):
                 for r in rows
             ],
             column_names=[
-                "run_id",
+                "results_id",
                 "case_id",
                 "prop_name",
                 "prop_value",
@@ -664,12 +665,14 @@ def main():
                 )
                 continue
 
-            # benchmark_runs.run_id is UInt64 — use a random 64-bit int
+            # benchmark_runs.run_id (legacy UInt64) is kept alongside results_id during the
+            # transition window — drop run_id once every reader is off it.
             run_id = uuid.uuid4().int >> 64  # positive 64-bit int
-            print(f"  run_id={run_id}  benchmarks={len(benchmarks)}")
+            results_id = str(uuid.uuid4())
+            print(f"  results_id={results_id}  benchmarks={len(benchmarks)}")
 
-            insert_benchmark_run(client, run_id, run_meta)
-            insert_perf_benchmarks(client, run_id, benchmarks)
+            insert_benchmark_run(client, run_id, results_id, run_meta)
+            insert_perf_benchmarks(client, results_id, benchmarks)
 
             total_benchmarks += len(benchmarks)
             print(f"  Inserted {len(benchmarks)} benchmark rows")
@@ -693,18 +696,18 @@ def main():
                 print(f"  Already ingested — skipping {run['filename']}")
                 continue
 
-            run_id = str(uuid.uuid4())
+            results_id = str(uuid.uuid4())
             print(
-                f"  run_id={run_id}  tests={run['total_tests']}  "
+                f"  results_id={results_id}  tests={run['total_tests']}  "
                 f"passed={run['passed']}  failed={run['failed']}  "
                 f"xpass={run['xpass']}  xfail={run['xfail']}  skipped={run['skipped']}"
             )
 
-            insert_run(client, run_id, run, args)
+            insert_run(client, results_id, run, args)
 
             existing_cases = client.query(
                 "SELECT count() FROM test_cases tc "
-                "INNER JOIN test_runs tr ON tc.run_id = tr.run_id "
+                "INNER JOIN test_runs tr ON tc.results_id = tr.results_id "
                 "WHERE tr.gha_run_id = {gha_run_id:UInt64} AND tr.filename = {filename:String}",
                 parameters={
                     "gha_run_id": int(args.run_id or 0),
@@ -714,15 +717,15 @@ def main():
             if existing_cases.result_rows[0][0] > 0:
                 print("  Cases already exist — skipping case+property inserts")
             else:
-                insert_cases(client, run_id, cases, workflow=args.workflow)
+                insert_cases(client, results_id, cases, workflow=args.workflow)
                 existing_props = client.query(
-                    "SELECT count() FROM run_properties WHERE run_id = {run_id:String}",
-                    parameters={"run_id": run_id},
+                    "SELECT count() FROM run_properties WHERE results_id = {results_id:String}",
+                    parameters={"results_id": results_id},
                 )
                 if existing_props.result_rows[0][0] > 0:
                     print("  Properties already exist — skipping property insert")
                 else:
-                    insert_properties(client, run_id, cases)
+                    insert_properties(client, results_id, cases)
 
             total_cases += len(cases)
             print(
