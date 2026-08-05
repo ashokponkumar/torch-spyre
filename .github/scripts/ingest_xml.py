@@ -249,7 +249,9 @@ def insert_benchmark_run(client, run_id: int, results_id: str, run_meta: dict) -
     )
 
 
-def insert_perf_benchmarks(client, results_id: str, benchmarks: list[dict]) -> None:
+def insert_perf_benchmarks(
+    client, run_id: str, results_id: str, benchmarks: list[dict]
+) -> None:
     if not benchmarks:
         return
     client.insert(
@@ -257,6 +259,7 @@ def insert_perf_benchmarks(client, results_id: str, benchmarks: list[dict]) -> N
         [
             [
                 b["benchmark_id"],
+                run_id,
                 results_id,
                 b["record_type"],
                 b["operation_name"],
@@ -280,6 +283,7 @@ def insert_perf_benchmarks(client, results_id: str, benchmarks: list[dict]) -> N
         ],
         column_names=[
             "benchmark_id",
+            "run_id",
             "results_id",
             "record_type",
             "operation_name",
@@ -486,6 +490,7 @@ def insert_run(client, results_id: str, run: dict, args):
         [
             [
                 results_id,
+                results_id,
                 args.workflow,
                 run["suite_name"],
                 run["filename"],
@@ -507,6 +512,7 @@ def insert_run(client, results_id: str, run: dict, args):
             ]
         ],
         column_names=[
+            "run_id",
             "results_id",
             "workflow",
             "suite_name",
@@ -538,6 +544,7 @@ def insert_cases(client, results_id: str, cases: list[dict], workflow: str = "")
         [
             [
                 results_id,
+                results_id,
                 c["case_id"],
                 c["classname"],
                 c["name"],
@@ -552,6 +559,7 @@ def insert_cases(client, results_id: str, cases: list[dict], workflow: str = "")
             for c in cases
         ],
         column_names=[
+            "run_id",
             "results_id",
             "case_id",
             "classname",
@@ -570,6 +578,7 @@ def insert_cases(client, results_id: str, cases: list[dict], workflow: str = "")
 def insert_properties(client, results_id: str, cases: list[dict]):
     rows = [
         {
+            "run_id": results_id,
             "results_id": results_id,
             "case_id": c["case_id"],
             "prop_name": pname,
@@ -584,6 +593,7 @@ def insert_properties(client, results_id: str, cases: list[dict]):
             "run_properties",
             [
                 [
+                    r["run_id"],
                     r["results_id"],
                     r["case_id"],
                     r["prop_name"],
@@ -593,6 +603,7 @@ def insert_properties(client, results_id: str, cases: list[dict]):
                 for r in rows
             ],
             column_names=[
+                "run_id",
                 "results_id",
                 "case_id",
                 "prop_name",
@@ -671,14 +682,14 @@ def main():
                 )
                 continue
 
-            # benchmark_runs.run_id (legacy UInt64) is kept alongside results_id during the
-            # transition window — drop run_id once every reader is off it.
+            # run_id is kept alongside results_id on every table during the transition
+            # window (readers still on run_id) — drop run_id once all readers migrate.
             run_id = uuid.uuid4().int >> 64  # positive 64-bit int
             results_id = str(uuid.uuid4())
             print(f"  results_id={results_id}  benchmarks={len(benchmarks)}")
 
             insert_benchmark_run(client, run_id, results_id, run_meta)
-            insert_perf_benchmarks(client, results_id, benchmarks)
+            insert_perf_benchmarks(client, run_id, results_id, benchmarks)
 
             total_benchmarks += len(benchmarks)
             print(f"  Inserted {len(benchmarks)} benchmark rows")
