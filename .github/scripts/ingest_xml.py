@@ -239,7 +239,13 @@ def insert_benchmark_run(client, run_id: int, results_id: str, run_meta: dict) -
                 run_meta["created_at"].replace(tzinfo=None),
             ]
         ],
-        column_names=["run_id", "results_id", "source_file", "version_info", "created_at"],
+        column_names=[
+            "run_id",
+            "results_id",
+            "source_file",
+            "version_info",
+            "created_at",
+        ],
     )
 
 
