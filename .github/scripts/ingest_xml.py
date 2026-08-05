@@ -484,6 +484,25 @@ def get_client():
     )
 
 
+# Tables written to during the run_id -> results_id migration; each needs a
+# String results_id column added once, alongside the pre-existing run_id.
+_RESULTS_ID_TABLES = [
+    "benchmark_runs",
+    "perf_benchmarks",
+    "test_runs",
+    "test_cases",
+    "run_properties",
+]
+
+
+def ensure_results_id_columns(client):
+    """Add a String results_id column to migration tables if it doesn't exist yet."""
+    for table in _RESULTS_ID_TABLES:
+        client.command(
+            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS results_id String AFTER run_id"
+        )
+
+
 def insert_run(client, results_id: str, run: dict, args):
     client.insert(
         "test_runs",
@@ -652,6 +671,7 @@ def main():
         f"{os.environ['CLICKHOUSE_HOST']}:{os.environ.get('CLICKHOUSE_PORT', 443)} ..."
     )
     client = get_client()
+    ensure_results_id_columns(client)
     client.command("SELECT 1")
     print("Connected.\n")
 
