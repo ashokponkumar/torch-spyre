@@ -409,10 +409,13 @@ jobs:
         run: |
           CONFIG="${{ matrix.suite.config }}"
           REPORT_NAME="$(basename "${CONFIG%.yaml}.xml")"
-          echo "REPORT_NAME=${REPORT_NAME}" >> "$GITHUB_ENV"
-          echo "REPORT_PATH=${GITHUB_WORKSPACE}/${REPORT_NAME}" >> "$GITHUB_ENV"
-          # Matches the -attemptN reports run-test-suite preserves on retry.
-          echo "REPORT_PATH_GLOB=${GITHUB_WORKSPACE}/${REPORT_NAME%.xml}-attempt*.xml" >> "$GITHUB_ENV"
+          # REPORT_PATH_GLOB matches the -attemptN reports run-test-suite
+          # preserves on retry.
+          {
+            echo "REPORT_NAME=${REPORT_NAME}"
+            echo "REPORT_PATH=${GITHUB_WORKSPACE}/${REPORT_NAME}"
+            echo "REPORT_PATH_GLOB=${GITHUB_WORKSPACE}/${REPORT_NAME%.xml}-attempt*.xml"
+          } >> "$GITHUB_ENV"
 
       - name: Run ${{ matrix.suite.name }} tests
         id: run_tests
@@ -722,10 +725,13 @@ jobs:
         run: |
           CONFIG="${{ matrix.suite.config }}"
           REPORT_NAME="$(basename "${CONFIG%.yaml}.xml")"
-          echo "REPORT_NAME=${REPORT_NAME}" >> "$GITHUB_ENV"
-          echo "REPORT_PATH=${GITHUB_WORKSPACE}/${REPORT_NAME}" >> "$GITHUB_ENV"
-          # Matches the -attemptN reports run-test-suite preserves on retry.
-          echo "REPORT_PATH_GLOB=${GITHUB_WORKSPACE}/${REPORT_NAME%.xml}-attempt*.xml" >> "$GITHUB_ENV"
+          # REPORT_PATH_GLOB matches the -attemptN reports run-test-suite
+          # preserves on retry.
+          {
+            echo "REPORT_NAME=${REPORT_NAME}"
+            echo "REPORT_PATH=${GITHUB_WORKSPACE}/${REPORT_NAME}"
+            echo "REPORT_PATH_GLOB=${GITHUB_WORKSPACE}/${REPORT_NAME%.xml}-attempt*.xml"
+          } >> "$GITHUB_ENV"
 
       - name: Run ${{ matrix.suite.name }} tests
         uses: ./.github/actions/run-test-suite
