@@ -70,8 +70,20 @@ jobs:
           source .venv/bin/activate
           uv pip install clickhouse-connect regex
 
-      - name: Setup the GitHub CLI
-        uses: actions4gh/setup-gh@v1.0.2
+      - name: Install gh CLI
+        run: |
+          # Track the newest gh release rather than a pinned version, so this
+          # needs no upgrade maintenance. The /releases/latest redirect carries
+          # the tag, so resolving it needs no gh and no authenticated API call.
+          TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            https://github.com/cli/cli/releases/latest | sed 's#.*/tag/##')
+          VER=${TAG#v}
+          echo "Installing gh ${TAG}"
+          curl -fsSL -o gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/${TAG}/gh_${VER}_linux_amd64.tar.gz"
+          tar -xzf gh.tar.gz
+          echo "$PWD/gh_${VER}_linux_amd64/bin" >> "${GITHUB_PATH}"
+          "gh_${VER}_linux_amd64/bin/gh" --version
 
       - name: Download Job Logs
         env:
