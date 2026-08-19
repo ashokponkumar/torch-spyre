@@ -24,8 +24,9 @@ from torch_spyre._inductor import config as _spyre_config
 from torch_spyre._inductor.codegen.compute_ops import SymbolKind
 from torch_spyre._inductor.codegen.superdsc import compile_op_spec
 from torch_spyre._inductor.constants import MAX_POOL_SIZE_BYTES
-from torch_spyre._inductor.op_spec import LoopSpec, OpSpec, format_op_spec_list
 from torch_spyre._inductor.logging_utils import get_inductor_logger
+from torch_spyre._inductor.op_spec import LoopSpec, OpSpec, format_op_spec_list
+from torch_spyre._inductor.op_spec_validation import validate_op_specs
 
 
 logger = get_inductor_logger("sdsc_compile")
@@ -96,6 +97,8 @@ def generate_bundle(
 
     specs_list: list = list(specs)
 
+    if _spyre_config.validate_op_specs:
+        validate_op_specs(specs_list, stage="before_bundle_generation")
     if logger.isEnabledFor(logging.INFO):
         logger.info(
             "OP SPECS FOR BUNDLE GENERATION\n%s",
