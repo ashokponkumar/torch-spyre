@@ -30,6 +30,7 @@ from torch_spyre._inductor.op_spec_validation import validate_op_specs
 
 
 logger = get_inductor_logger("sdsc_compile")
+sdsc_log = get_inductor_logger("sdsc")
 
 # ---------------------------------------------------------------------------
 # Types
@@ -421,6 +422,11 @@ def generate_bundle(
         f.write("\t}\n")
         f.write("}\n")
 
+    if sdsc_log.isEnabledFor(logging.INFO):
+        bundle_path = os.path.join(output_dir, "bundle.mlir")
+        with open(bundle_path, "r") as bf:
+            sdsc_log.info("BUNDLE MLIR [bundle.mlir]\n%s", bf.read())
+
 
 # ---------------------------------------------------------------------------
 # Pass 1 helpers
@@ -465,6 +471,12 @@ def _compile_specs(
             with open(os.path.join(output_dir, file_name), "w") as f:
                 logger.info(f"Generating {f.name}")
                 json.dump(sdsc_json, f, indent=2)
+            if sdsc_log.isEnabledFor(logging.INFO):
+                sdsc_log.info(
+                    "SDSC JSON [%s]\n%s",
+                    file_name,
+                    json.dumps(sdsc_json, indent=2),
+                )
         # UnimplementedOp and other types are silently skipped.
 
 
