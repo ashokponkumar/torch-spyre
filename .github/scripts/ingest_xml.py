@@ -36,6 +36,19 @@ import clickhouse_connect
 # ---------------------------------------------------------------------------
 
 
+def _gha_run_id(args) -> int:
+    """The numeric GitHub Actions run id for the gha_run_id column / dedup key.
+
+    Kept strictly separate from --run-id, which carries a UUID identifying the test run;
+    a non-numeric value here must degrade to 0 rather than abort the whole ingest.
+    """
+    raw = (getattr(args, "gha_run_id", "") or "").strip()
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 0
+
+
 def _tag_props(tc_el) -> dict:
     """Return a flat dict of tag__ → value parsed from <properties>."""
     result = {}
@@ -744,7 +757,7 @@ def insert_run(client, run_id: str, run: dict, args):
                 args.branch,
                 (args.sha or "").ljust(40)[:40],
                 int(args.pr_number) if args.pr_number.strip() else 0,
-                int(args.run_id or 0),
+                _gha_run_id(args),
                 run["triggered_at"].replace(tzinfo=None),
                 run["total_tests"],
                 run["passed"],
@@ -879,6 +892,7 @@ def main():
     parser.add_argument("--branch", default="")
     parser.add_argument("--sha", default="")
     parser.add_argument("--run-id", default="")
+    parser.add_argument("--gha-run-id", default="")
     parser.add_argument("--triggered-at", default="")
     parser.add_argument("--pr-number", default="")
     parser.add_argument(
@@ -1027,26 +1041,34 @@ def main():
             if run is None:
                 continue
 
-            # Deduplication
+            # One run_id per TEST RUN, not per XML file: the dispatching orchestrator
+            # generates a uuid and threads it down as --run-id, stamping the SAME value on
+            # artifact_results, so the two tables join. Falls back to a fresh uuid4 when
+            # --run-id is absent or not a uuid (standalone / GHA-only run): the rows are
+            # still valid, just not linked to an artifact.
+            run_id = _threaded_run_id(args) or str(uuid.uuid4())
+
+            # Dedup on (run_id, filename): a re-ingest of the SAME test run must be
+            # idempotent, but two distinct runs must never collapse. gha_run_id alone
+            # cannot do this -- it is 0 on Jenkins legs, which carry a uuid instead.
+            gha_run_id = _gha_run_id(args)
             existing = client.query(
                 "SELECT count() FROM test_runs "
-                "WHERE gha_run_id = {gha_run_id:UInt64} AND filename = {filename:String}",
-                parameters={
-                    "gha_run_id": int(args.run_id or 0),
-                    "filename": run["filename"],
-                },
+                "WHERE run_id = {run_id:String} AND filename = {filename:String}",
+                parameters={"run_id": run_id, "filename": run["filename"]},
             )
+            if existing.result_rows[0][0] == 0 and gha_run_id:
+                # A GHA re-ingest mints a fresh uuid4, so fall back to the numeric run id
+                # to keep that path idempotent.
+                existing = client.query(
+                    "SELECT count() FROM test_runs WHERE "
+                    "gha_run_id = {gha_run_id:UInt64} AND filename = {filename:String}",
+                    parameters={"gha_run_id": gha_run_id, "filename": run["filename"]},
+                )
             if existing.result_rows[0][0] > 0:
                 print(f"  Already ingested — skipping {run['filename']}")
                 continue
 
-            # One run_id per TEST RUN, not per XML file: the dispatching orchestrator
-            # generates a uuid and threads it down as --run-id, and stamps the SAME value on
-            # artifact_results, so the two tables join. `filename` stays the per-file
-            # discriminator among the rows that share it.
-            # Falls back to a fresh uuid4 when --run-id is absent or not a uuid (a standalone
-            # or GHA-only run): the rows are still valid, just not linked to an artifact.
-            run_id = _threaded_run_id(args) or str(uuid.uuid4())
             print(
                 f"  run_id={run_id}  tests={run['total_tests']}  "
                 f"passed={run['passed']}  failed={run['failed']}  "
@@ -1055,14 +1077,11 @@ def main():
 
             insert_run(client, run_id, run, args)
 
+            # run_id is this run's own key, so the join through test_runs is no longer
+            # needed to find its cases.
             existing_cases = client.query(
-                "SELECT count() FROM test_cases tc "
-                "INNER JOIN test_runs tr ON tc.run_id = tr.run_id "
-                "WHERE tr.gha_run_id = {gha_run_id:UInt64} AND tr.filename = {filename:String}",
-                parameters={
-                    "gha_run_id": int(args.run_id or 0),
-                    "filename": run["filename"],
-                },
+                "SELECT count() FROM test_cases WHERE run_id = {run_id:String}",
+                parameters={"run_id": run_id},
             )
             if existing_cases.result_rows[0][0] > 0:
                 print("  Cases already exist — skipping case+property inserts")
