@@ -68,6 +68,50 @@ RE_HW_RETRY_BANNER = re.compile(r"Hardware RAS timeout detected", re.IGNORECASE)
 RE_STALL_LINE = re.compile(r"\[stall-watcher\] No new output for (?P<secs>\d+)s")
 RE_SIGNAL_EXIT = re.compile(r"SIGNAL EXIT", re.IGNORECASE)
 
+# AIU device inventory printed before the test body, e.g.
+#   "---- --> Detected:   1 AIU PFs,   0 AIU VFs,   0 NICs,   2 NVMEs"
+# Zero of both PFs and VFs means no card attached — environment, not test code.
+RE_DEVICE_INVENTORY = re.compile(
+    r"-->\s*Detected:\s*(?P<pfs>\d+)\s*AIU\s*PFs\s*,\s*(?P<vfs>\d+)\s*AIU\s*VFs",
+    re.IGNORECASE,
+)
+
+# Harness/setup aborts that happen before pytest can collect anything. These are
+# the single largest residual bucket: the suite never ran, so attributing them to
+# the tests would be wrong.
+RE_SETUP_ABORT = re.compile(
+    r"(ERROR: Could not locate PyTorch source root"
+    r"|Could not locate PyTorch source root"
+    r"|No such file or directory: .*config.*\.yaml"
+    r"|YAML config .* not found"
+    r"|ModuleNotFoundError"
+    r"|ImportError: "
+    r"|error: unable to connect to sentient"
+    r"|Failed to initialize runtime)",
+    re.IGNORECASE,
+)
+
+# A torchrun worker died: distributed rank crash, not a reported test failure.
+# The rank's own traceback is usually swallowed (`error_file: <N/A>`), so the
+# elastic wrapper's ChildFailedError is the only durable signal.
+RE_DISTRIBUTED_CRASH = re.compile(
+    r"(ChildFailedError"
+    r"|failed \(exitcode: -?\d+\) local_rank:"
+    r"|Fatal Python error: Aborted)",
+)
+
+# Infrastructure faults: the runner or its image, not this repo's code.
+RE_INFRA_FAULT = re.compile(
+    r"(ImagePullBackOff|ErrImagePull"
+    r"|failed to pull image"
+    r"|no space left on device"
+    r"|OOMKilled"
+    r"|The runner has received a shutdown signal"
+    r"|Received request to deprovision"
+    r"|lost communication with the server)",
+    re.IGNORECASE,
+)
+
 # Process crash / signal patterns
 # Matches: "Signal Received: 6 (Aborted)" or "Signal Received: 11 (Segmentation fault)"
 RE_SIGNAL_RECEIVED = re.compile(
@@ -190,11 +234,22 @@ RE_LOG_TS = re.compile(
     r"(?P<time>\d{2}:\d{2}:\d{2}\.\d+)"
 )
 
-# Pytest stats
+# Pytest stats.
+# The counts must be anchored to pytest's own tally words, which are always
+# followed by a comma, a closing "=" rule, or end of line. A bare "(\d+) failed"
+# also matches prose like "Downloaded 2 failed-suite descriptor(s)", which made
+# a successful orchestration job report 2 failed tests.
+_TALLY_END = r"(?=\s*(?:,|=|$|\s+in\s))"
 RE_COLLECTED = re.compile(r"collected (?P<n>\d+) item")
-RE_PY_PASSED = re.compile(r"(?P<n>\d+) passed")
-RE_PY_FAILED = re.compile(r"(?P<n>\d+) failed")
-RE_PY_ERROR = re.compile(r"(?P<n>\d+) error")
+RE_PY_PASSED = re.compile(r"(?P<n>\d+) passed" + _TALLY_END)
+RE_PY_FAILED = re.compile(r"(?P<n>\d+) failed" + _TALLY_END)
+# Stricter still: requires a sibling tally on the same line, so only a real
+# pytest summary ("= 1 failed, 47 passed in 91.71s =") can match.
+_TALLY_WORD = r"(?:passed|skipped|deselected|xfailed|xpassed|error|errors|warnings)"
+RE_SUMMARY_FAILED = re.compile(
+    r"(?P<n>\d+) failed\s*,\s*\d+\s*" + _TALLY_WORD
+)
+RE_PY_ERROR = re.compile(r"(?P<n>\d+) errors?" + _TALLY_END)
 
 # Phase fingerprints
 RE_PHASE_COLLECT = re.compile(r"ERROR collecting")
@@ -219,6 +274,47 @@ def _ras_name_to_reason(name: str) -> str:
     if name.startswith("RAS::"):
         return "hardware_ras_other"
     return "other"
+
+
+def _classify_residual(chunk: str) -> tuple[str, dict[str, Any]]:
+    """Label a failed attempt with no RAS event, crash, stall or signal exit.
+
+    Splits what would otherwise all be `other` into buckets that name the owner.
+    Ordered most to least specific. Derives its own counts from the pytest
+    summary rather than reading rec[], because the pytest stats are populated
+    later in the record's construction than this call.
+    """
+    infra = RE_INFRA_FAULT.search(chunk)
+    if infra:
+        return "infra_fault", {"signal": infra.group(0)[:200]}
+
+    inv = RE_DEVICE_INVENTORY.search(chunk)
+    if inv and int(inv["pfs"]) == 0 and int(inv["vfs"]) == 0:
+        return "hardware_no_device", {"aiu_pfs": 0, "aiu_vfs": 0}
+
+    setup = RE_SETUP_ABORT.search(chunk)
+    if setup:
+        return "setup_abort", {"signal": setup.group(0)[:200]}
+
+    dist = RE_DISTRIBUTED_CRASH.search(chunk)
+    if dist:
+        return "distributed_crash", {"signal": dist.group(0)[:200]}
+
+    # The pytest tally is the authority on whether the tests themselves failed.
+    # `RE_SUMMARY_FAILED` requires the summary form ("N failed, M passed") so a
+    # prose line such as "Downloaded 2 failed-suite descriptor(s)" cannot count.
+    summary_failed = RE_SUMMARY_FAILED.search(chunk)
+    if summary_failed:
+        return "test_failure", {"tests_failed": int(summary_failed["n"])}
+
+    if RE_COLLECTED.search(chunk):
+        # Tests were collected and none are reported failed, yet the attempt
+        # failed: teardown, the runner script, or a non-pytest step.
+        return "harness_failure", {}
+
+    # Nothing identifiable ran and no pattern matched. Kept distinct from the
+    # buckets above so a genuinely unknown failure stays visible as unknown.
+    return "unclassified", {}
 
 
 # ----------------
@@ -443,11 +539,19 @@ def parse_log(text: str, run_id: str, suite_hint: str = "") -> list[dict[str, An
             # Possible values:
             #   none | hardware_ras_timeout | hardware_vfio_error |
             #   hardware_pci_busfence | hardware_ras_other |
+            #   hardware_no_device (inventory found no AIU PF or VF) |
             #   process_crash (signal/abort/heap corruption) |
-            #   stall | signal_exit | other
+            #   stall | signal_exit |
+            #   infra_fault (runner/image: pull failure, disk, OOM, deprovision) |
+            #   setup_abort (harness died before pytest collected anything) |
+            #   distributed_crash (torchrun rank died) |
+            #   test_failure (pytest tallied failures) |
+            #   harness_failure (tests collected, none failed, attempt failed) |
+            #   unclassified (failed, no pattern matched)
             "failure_reason": "none",
-            # Full parsed RAS JSON of the primary (first) error, or {} if none.
-            # For non-RAS failures (stall, other) this is {}.
+            # Parsed RAS JSON of the primary error, the crash detail, or a small
+            # {"signal": ...} / count dict for the residual classes; {} if the
+            # matched class carries no payload.
             "failure_reason_detail": {},
             # Possible values:
             #   collection | firmware_init | runtime_init | execution | (empty)
@@ -510,9 +614,12 @@ def parse_log(text: str, run_id: str, suite_hint: str = "") -> list[dict[str, An
             # "N passed" with no "failed" or "error" in the pytest summary → passed.
             # GHA-level "Error: Process completed" line → failed.
             # Avoid false positives from INFO/WARN log lines containing "error".
-            has_pytest_passed = bool(re.search(r"\d+ passed", chunk))
-            has_pytest_failed = bool(re.search(r"\d+ failed", chunk))
-            has_pytest_error = bool(re.search(r"\d+ error", chunk))
+            # Anchored tallies only: a bare "\d+ failed" also matches prose such
+            # as "Downloaded 2 failed-suite descriptor(s)", which marked the
+            # (successful) retry-collector job as a failed attempt.
+            has_pytest_passed = bool(RE_PY_PASSED.search(chunk))
+            has_pytest_failed = bool(RE_PY_FAILED.search(chunk))
+            has_pytest_error = bool(RE_PY_ERROR.search(chunk))
             has_gha_exit_error = bool(
                 re.search(r"Error: Process completed with exit code [^0]", chunk)
             )
@@ -564,7 +671,9 @@ def parse_log(text: str, run_id: str, suite_hint: str = "") -> list[dict[str, An
         elif RE_SIGNAL_EXIT.search(chunk) and rec["outcome"] == "failed":
             rec["failure_reason"] = "signal_exit"
         elif rec["outcome"] == "failed":
-            rec["failure_reason"] = "other"
+            rec["failure_reason"], rec["failure_reason_detail"] = _classify_residual(
+                chunk
+            )
         # else: "none" (passed)
 
         # ---------------- Failure phase --------------------
