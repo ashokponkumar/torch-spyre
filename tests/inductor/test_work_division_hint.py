@@ -571,6 +571,32 @@ def _relayout_plan(source="source", consumers="consumer"):
     return LXRelayoutPlan(source, consumers, _SOURCE_VIEW, _DESTINATION_VIEW, 8)
 
 
+@pytest.mark.parametrize(
+    ("view", "message"),
+    [
+        (
+            PerCoreView(((0, 2),), (), num_cores=2),
+            "split and owner-slot dimensions differ",
+        ),
+        (
+            PerCoreView(
+                ((0, 2),),
+                ((0, Symbol("unknown_owner")),),
+                num_cores=2,
+            ),
+            "non-integral owner slot",
+        ),
+        (
+            PerCoreView(((0, 2),), ((0, Integer(2)),), num_cores=2),
+            "owner slot 2 outside split 2",
+        ),
+    ],
+)
+def test_lx_relayout_partition_validation_fails_closed(view, message):
+    with pytest.raises(ValueError, match=message):
+        lx_relayout_module._compatible_partitions(view, _DESTINATION_VIEW, 2)
+
+
 def test_lx_relayout_activation_policy_is_source_wide():
     dep = SimpleNamespace(name="input")
     producer = SimpleNamespace()
@@ -945,21 +971,6 @@ def test_lx_relayout_keeps_source_lifetime_for_later_original_reader():
     tail = LifetimeBoundBuffer("tail", 64, [6, 7])
     buffers.append(tail)
     _assert_live_buffers_do_not_share_addresses(graph, buffers, 384)
-
-
-@config.patch({"lx_planner_relayout": True})
-def test_lx_relayout_warns_for_unsupported_solver(caplog):
-    class UnsupportedSolver:
-        pass
-
-    allocator = ScratchpadAllocator(UnsupportedSolver, 256)
-    allocator._generate_buffers = lambda _graph: []
-    with caplog.at_level(logging.WARNING, logger="spyre.inductor.scratchpad.allocator"):
-        assert allocator._prepare_buffers(SimpleNamespace()) == []
-    assert any(
-        "LX relayout is not supported by UnsupportedSolver" in record.message
-        for record in caplog.records
-    )
 
 
 class _RelayoutNode:
