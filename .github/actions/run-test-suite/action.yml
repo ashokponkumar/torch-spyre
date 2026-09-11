@@ -329,7 +329,7 @@ runs:
             exit 0
           fi
 
-          if [[ $_DEVICE_OPEN_FAIL -ne 1 || $_i -eq $_DEVICE_OPEN_RETRY_MAX ]]; then
+          if [[ $_DEVICE_OPEN_FAIL -ne 1 || $_i -ge $_DEVICE_OPEN_RETRY_MAX ]]; then
             break
           fi
           echo "    --> Attempt 2 hit RAS::VFIO::DeviceOpenFail — card release still racing; retrying device-open after backoff"
