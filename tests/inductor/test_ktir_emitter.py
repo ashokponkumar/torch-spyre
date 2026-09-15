@@ -297,7 +297,13 @@ class TestReductionEmission(unittest.TestCase):
 
     What comes out is the form a hand-written KTIR ``sum`` kernel uses -- a
     ``linalg.reduce`` with ``dimensions = [1]`` into a bare ``tensor.empty``, and
-    no reshape, because the placeholder axis is dropped rather than reduced.  A
+    no reshape, because the placeholder axis is dropped rather than reduced.
+
+    The combiner appears as MLIR's SHORT form, ``linalg.reduce { arith.addf }``,
+    rather than an explicit region.  That is not cosmetic: ``ReduceOp``'s printer
+    uses the short form only when the body folds accumulator-first, so the text
+    below is evidence the emitter writes ``combine(acc, x)``.  It printed an
+    explicit region while the operands were the other way round.  A
     ``linalg.fill`` accumulator would be rejected by the scheduler's first pass,
     and ``tensor.expand_shape`` is not supported anywhere in it, so both are worth
     the golden pinning them out.
@@ -319,11 +325,7 @@ module {
     %3 = ktdp.construct_access_tile %1[%0, %c0, %c0] {access_tile_order = #map, access_tile_set = #set2} : memref<32x256x64xf16> -> !ktdp.access_tile<1x256x64xindex>
     %4 = ktdp.load %3 : <1x256x64xindex> -> tensor<1x256x64xf16>
     %5 = tensor.empty() : tensor<1x64xf16>
-    %reduced = linalg.reduce ins(%4 : tensor<1x256x64xf16>) outs(%5 : tensor<1x64xf16>) dimensions = [1] 
-      (%in: f16, %init: f16) {
-        %7 = arith.addf %in, %init : f16
-        linalg.yield %7 : f16
-      }
+    %reduced = linalg.reduce { arith.addf } ins(%4 : tensor<1x256x64xf16>) outs(%5 : tensor<1x64xf16>) dimensions = [1] 
     %6 = ktdp.construct_access_tile %2[%0, %c0] {access_tile_order = #map1, access_tile_set = #set3} : memref<32x64xf16> -> !ktdp.access_tile<1x64xindex>
     ktdp.store %reduced, %6 : tensor<1x64xf16>, <1x64xindex>
     return
@@ -423,7 +425,7 @@ module {
     %4 = tensor.empty() : tensor<256x64xf16>
     %5 = linalg.generic {indexing_maps = [#map1, #map2], iterator_types = ["reduction", "parallel", "reduction", "parallel"]} ins(%3 : tensor<2x256x64xf16>) outs(%4 : tensor<256x64xf16>) {
     ^bb0(%in: f16, %out: f16):
-      %7 = arith.addf %in, %out : f16
+      %7 = arith.addf %out, %in : f16
       linalg.yield %7 : f16
     } -> tensor<256x64xf16>
     %6 = ktdp.construct_access_tile %1[%c0, %c0] {access_tile_order = #map3, access_tile_set = #set1} : memref<256x64xf16> -> !ktdp.access_tile<256x64xindex>
@@ -577,6 +579,151 @@ module {
 
         emitted = ktir.generate_ktir("ktir_tiled_add_0", [self._tiled_nest()])
         self.assertEqual(emitted, self.EXPECTED_TILED_ADD_KTIR)
+
+
+@unittest.skipUnless(
+    _mlir_ktdp_available(),
+    "mlir_ktdp with the func/arith/linalg/scf/tensor dialect bindings is not installed",
+)
+class TestIntrinsicPayloadEmission(unittest.TestCase):
+    """A ``spyreop`` intrinsic (``sqrt``) over the whole [16, 512, 64] tile.
+
+    A PAYLOAD recipe is a *scalar* builder, so it reaches ``Surface.GENERIC``: an
+    all-parallel ``linalg.generic`` stating the identity maps, whose body is the
+    one ``spyreop`` op and a ``linalg.yield``.  The intrinsic takes the tile's own
+    f16 and owns its f16->f32->approx->f16 internally, so there is no fp32
+    precision bracket around it (dataflow-scheduler#36).
+
+    No new emission shape: ``_emit_generic`` is the same method the on-stick
+    reduction uses, reached here with no reduced dim, so the ``outs`` block
+    argument is dropped rather than folded into.  The dataflow either side of the
+    compute -- view, tile, load, store -- is exactly the pointwise form, which is
+    why only the compute lines differ from ``EXPECTED_ADD_KTIR``.
+    """
+
+    EXPECTED_SQRT_KTIR = """\
+#map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
+#set = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 15 >= 0, d1 >= 0, -d1 + 511 >= 0, d2 >= 0, -d2 + 63 >= 0)>
+module {
+  func.func @ktir_fused_sqrt_0(%arg0: index, %arg1: index) attributes {grid = [1]} {
+    %c0 = arith.constant 0 : index
+    %0 = ktdp.construct_memory_view %arg0, sizes: [16, 512, 64], strides: [32768, 64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<16x512x64xf16>
+    %1 = ktdp.construct_memory_view %arg1, sizes: [16, 512, 64], strides: [32768, 64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<16x512x64xf16>
+    %2 = ktdp.construct_access_tile %0[%c0, %c0, %c0] {access_tile_order = #map, access_tile_set = #set} : memref<16x512x64xf16> -> !ktdp.access_tile<16x512x64xindex>
+    %3 = ktdp.load %2 : <16x512x64xindex> -> tensor<16x512x64xf16>
+    %4 = tensor.empty() : tensor<16x512x64xf16>
+    %5 = linalg.generic {indexing_maps = [#map, #map], iterator_types = ["parallel", "parallel", "parallel"]} ins(%3 : tensor<16x512x64xf16>) outs(%4 : tensor<16x512x64xf16>) {
+    ^bb0(%in: f16, %out: f16):
+      %7 = spyreop.sqrt %in : f16
+      linalg.yield %7 : f16
+    } -> tensor<16x512x64xf16>
+    %6 = ktdp.construct_access_tile %1[%c0, %c0, %c0] {access_tile_order = #map, access_tile_set = #set} : memref<16x512x64xf16> -> !ktdp.access_tile<16x512x64xindex>
+    ktdp.store %5, %6 : tensor<16x512x64xf16>, <16x512x64xindex>
+    return
+  }
+}
+"""
+
+    def test_sqrt_golden(self):
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        emitted = generate_ktir("ktir_fused_sqrt_0", [make_op_spec("sqrt", inputs=1)])
+        self.assertEqual(emitted, self.EXPECTED_SQRT_KTIR)
+
+    def test_the_generic_body_is_a_single_spyreop(self):
+        """One op in the region and no cast pair: the generic walks all-parallel,
+        the intrinsic takes and yields the tile's own f16, and no ``arith.extf`` /
+        ``arith.truncf`` widen or narrow appears."""
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        emitted = generate_ktir("ktir_fused_sqrt_0", [make_op_spec("sqrt", inputs=1)])
+        self.assertIn('iterator_types = ["parallel", "parallel", "parallel"]', emitted)
+        self.assertIn("spyreop.sqrt %in : f16", emitted)
+        self.assertIn("linalg.yield", emitted)
+        # No fp32 precision bracket: the intrinsic owns its own precision.
+        self.assertNotIn("arith.extf", emitted)
+        self.assertNotIn("arith.truncf", emitted)
+
+    def test_the_out_block_argument_is_dropped_not_read(self):
+        """A parallel body computes from its inputs, so ``%out`` is unused.
+
+        The same block ``_emit_generic`` gives a reducing nest, where ``%out`` *is*
+        the accumulator -- which is why this is worth pinning: the arity works out
+        either way, so reading the wrong argument would still verify.
+        """
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        emitted = generate_ktir("ktir_fused_sqrt_0", [make_op_spec("sqrt", inputs=1)])
+        [body] = [line for line in emitted.splitlines() if "spyreop.sqrt" in line]
+        self.assertNotIn("%out", body)
+
+    def test_each_intrinsic_reaches_its_own_binding(self):
+        """A second intrinsic costs one recipe and no emitter change: same generic
+        shape, different ``spyreop`` op.  Asserted as a delta against the ``sqrt``
+        golden, so what it claims is that nothing but the op name moved."""
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        for op, printed in (
+            ("exp", "spyreop.exp"),
+            ("sigmoid", "spyreop.sigmoid"),
+            ("reciprocal", "spyreop.reciprocal"),
+            # The one pair where the handler name and the op differ.
+            ("gelufwd", "spyreop.gelu"),
+        ):
+            with self.subTest(op=op):
+                emitted = generate_ktir(
+                    f"ktir_fused_{op}_0", [make_op_spec(op, inputs=1)]
+                )
+                self.assertIn(f"{printed} %in : f16", emitted)
+                self.assertNotIn("spyreop.sqrt", emitted)
+                self.assertEqual(
+                    emitted.replace(printed, "spyreop.sqrt").replace(
+                        f"@ktir_fused_{op}_0", "@ktir_fused_sqrt_0"
+                    ),
+                    self.EXPECTED_SQRT_KTIR,
+                )
+
+    def test_softplus_carries_its_beta_and_threshold(self):
+        """An intrinsic with scalar arguments: softplus's ``beta``/``threshold``
+        are read from ``op_info["constants"]`` onto the step and printed on the op,
+        the generic scaffold otherwise identical to the argument-free case."""
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        spec = make_op_spec(
+            "softplus",
+            inputs=1,
+            op_info={"constants": {"softplusBeta": 1.0, "softplusThresh": 20.0}},
+        )
+        emitted = generate_ktir("ktir_fused_softplus_0", [spec])
+        self.assertIn(
+            "spyreop.softplus %in beta 1.000000e+00 threshold 2.000000e+01 : f16",
+            emitted,
+        )
+        # Same scaffold as the argument-free intrinsics: only the op line differs.
+        self.assertEqual(
+            emitted.replace(
+                "spyreop.softplus %in beta 1.000000e+00 threshold 2.000000e+01 : f16",
+                "spyreop.sqrt %in : f16",
+            ).replace("@ktir_fused_softplus_0", "@ktir_fused_sqrt_0"),
+            self.EXPECTED_SQRT_KTIR,
+        )
+
+    def test_the_attributes_are_the_specs_and_not_defaults(self):
+        """A second set of constants reaches the op, so the values are read rather
+        than baked: the beta/threshold of the golden are not the only pair that
+        can print."""
+        from torch_spyre._inductor.codegen.ktir import generate_ktir
+
+        spec = make_op_spec(
+            "softplus",
+            inputs=1,
+            op_info={"constants": {"softplusBeta": 2.5, "softplusThresh": 10.0}},
+        )
+        emitted = generate_ktir("ktir_fused_softplus_0", [spec])
+        self.assertIn(
+            "spyreop.softplus %in beta 2.500000e+00 threshold 1.000000e+01 : f16",
+            emitted,
+        )
 
 
 if __name__ == "__main__":
