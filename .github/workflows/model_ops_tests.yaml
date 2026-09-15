@@ -43,7 +43,10 @@ jobs:
       - x86_64
       - spyre_pf_x0
       - linux
-      - image_spyre_backend
+      # Inert until this workflow's merge_group trigger above is uncommented;
+      # kept in place so re-enabling it does not silently put merge-queue jobs
+      # back in the PR-commit card queue.
+      - ${{ (github.event_name == 'merge_group' && 'image_spyre_backend_mq') || 'image_spyre_backend' }}
     timeout-minutes: 40
     steps:
       - name: Checkout composite actions
@@ -80,7 +83,10 @@ jobs:
       - x86_64
       - spyre_pf_x1
       - linux
-      - image_spyre_backend
+      # Inert until this workflow's merge_group trigger above is uncommented;
+      # kept in place so re-enabling it does not silently put merge-queue jobs
+      # back in the PR-commit card queue.
+      - ${{ (github.event_name == 'merge_group' && 'image_spyre_backend_mq') || 'image_spyre_backend' }}
     timeout-minutes: 60
     env:
       # The CI env var is very important.
