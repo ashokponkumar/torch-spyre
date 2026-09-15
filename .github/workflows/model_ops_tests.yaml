@@ -43,9 +43,6 @@ jobs:
       - x86_64
       - spyre_pf_x0
       - linux
-      # Inert until this workflow's merge_group trigger above is uncommented;
-      # kept in place so re-enabling it does not silently put merge-queue jobs
-      # back in the PR-commit card queue.
       - ${{ (github.event_name == 'merge_group' && 'image_spyre_backend_mq') || 'image_spyre_backend' }}
     timeout-minutes: 40
     steps:
@@ -83,9 +80,6 @@ jobs:
       - x86_64
       - spyre_pf_x1
       - linux
-      # Inert until this workflow's merge_group trigger above is uncommented;
-      # kept in place so re-enabling it does not silently put merge-queue jobs
-      # back in the PR-commit card queue.
       - ${{ (github.event_name == 'merge_group' && 'image_spyre_backend_mq') || 'image_spyre_backend' }}
     timeout-minutes: 60
     env:
