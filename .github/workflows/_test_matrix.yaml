@@ -636,6 +636,7 @@ jobs:
           artifact_name: ${{ inputs.pytorch_wheel_artifact_name }}
 
       - name: Run perf benchmark (make tests TEST_TYPE=perf)
+        id: run-perf
         run: |
           # Prebaked: run FROM the baked source dir + its SHARED venv at
           # $HOME/.venv; normal: the checkout ('torch-spyre') + local '.venv'.
@@ -662,12 +663,31 @@ jobs:
       # The benchmark reports are not uploaded as workflow artifacts; the
       # results are consumed only by the ClickHouse ingest path.
       - name: Confirm perf report was produced
+        id: confirm-report
         run: |
           # Fail if the benchmark did not write its report. Do not echo the
           # report contents to the build log.
           test -f "${RESULTS_DIR}/report.xml" \
             || { echo "::error::perf run did not produce report.xml"; exit 1; }
           echo "perf report written to \${RESULTS_DIR} (not uploaded)"
+
+      # Required even when ClickHouse ingest is skipped: test -f above would
+      # PASS an empty envelope. ingest_xml.py --validate-only parses the same
+      # way as ingest and exits non-zero on --trigger-type perf + 0 rows.
+      - name: Validate perf report has benchmark rows
+        id: validate-report
+        run: |
+          if [ "${{ inputs.prebaked_image }}" = "true" ]; then
+            VENV="${PREBAKED_VENV_PATH}"
+          else
+            VENV="torch-spyre/.venv"
+          fi
+          # shellcheck disable=SC1091
+          source "${VENV}/bin/activate"
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/ingest_xml.py" \
+            --validate-only \
+            --xml-dir "${RESULTS_DIR}" \
+            --trigger-type perf
 
       # Push the perf report to ClickHouse INLINE on this card runner. The
       # report is never uploaded as a workflow artifact (public repo: artifacts
@@ -676,8 +696,9 @@ jobs:
       # matrix suites use. The composite action is the SAME ingest
       # implementation that workflow reuses, so there is one code path, not two.
       # Gated on CLICKHOUSE_HOST: a caller that passes no ClickHouse secrets
-      # skips the push and the perf run still succeeds.
+      # skips the push. validate-report still fails an empty envelope.
       - name: Ingest perf report into ClickHouse (inline, no artifact)
+        id: ingest
         if: ${{ env.CLICKHOUSE_HOST != '' }}
         uses: ./.github/actions/ingest-xml-to-clickhouse
         with:
@@ -699,6 +720,49 @@ jobs:
           clickhouse-user: ${{ secrets.CLICKHOUSE_USER }}
           clickhouse-pass: ${{ secrets.CLICKHOUSE_PASS }}
           clickhouse-db: ${{ secrets.CLICKHOUSE_DB }}
+
+      # Same four honesty lines as product-test. Echo only — never upload
+      # report.xml (public artifacts would leak benchmark numbers).
+      - name: Perf ingest banners
+        if: always()
+        env:
+          EXEC_OUTCOME: ${{ steps.run-perf.outcome }}
+          REPORT_OUTCOME: ${{ steps.confirm-report.outcome }}
+          VALIDATE_OUTCOME: ${{ steps.validate-report.outcome }}
+          INGEST_OUTCOME: ${{ steps.ingest.outcome }}
+        run: |
+          if [ "${EXEC_OUTCOME}" = "success" ]; then
+            EXEC=PASS
+          else
+            EXEC=FAIL
+          fi
+          if [ "${REPORT_OUTCOME}" = "success" ] && [ "${VALIDATE_OUTCOME}" = "success" ]; then
+            VALIDATION=PASS
+          else
+            VALIDATION=FAIL
+          fi
+          if [ "${INGEST_OUTCOME}" = "success" ]; then
+            INGEST=SUCCESS
+          elif [ "${INGEST_OUTCOME}" = "failure" ]; then
+            INGEST=FAILED
+          else
+            INGEST=SKIPPED
+          fi
+          if [ "${REPORT_OUTCOME}" != "success" ]; then
+            REASON="required result file missing/empty"
+          elif [ "${VALIDATE_OUTCOME}" != "success" ]; then
+            REASON="Benchmarks ingested: 0"
+          elif [ "${INGEST_OUTCOME}" = "failure" ]; then
+            REASON="ClickHouse ingest failed"
+          elif [ "${INGEST_OUTCOME}" = "skipped" ] || [ -z "${INGEST_OUTCOME}" ]; then
+            REASON="ingest not reached"
+          else
+            REASON="ok"
+          fi
+          echo "benchmark execution: ${EXEC}"
+          echo "report validation: ${VALIDATION}"
+          echo "ClickHouse ingest: ${INGEST}"
+          echo "reason: ${REASON}"
 
   # ---------------------------------------------------------------------------
   # Job 2: Multi-Spyre test matrix
