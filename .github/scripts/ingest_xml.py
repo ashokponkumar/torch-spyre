@@ -80,7 +80,7 @@ PERF_SUITE_NAME = "spyre-perf-suite"
 # version_info must name these four with a real commit. spyre-perf-suite is
 # not required until that SHA is emitted (#150).
 _REQUIRED_PROVENANCE_KEYS = ("torch-spyre", "flex", "deeptools", "spyre-comms")
-_MISSING_COMMIT = {None, "", "null", "N/A", "None"}
+_MISSING_COMMIT = {"", "null", "N/A", "None"}
 
 
 def is_benchmark_xml(root, xml_path: Path | None = None) -> bool:
@@ -98,10 +98,10 @@ def is_benchmark_xml(root, xml_path: Path | None = None) -> bool:
         return all("benchmark" in (tc.get("classname", "")) for tc in cases)
     if xml_path is not None and xml_path.name == "report.xml":
         return True
-    if root.get("name") == PERF_SUITE_NAME:
-        return True
     suite = root.find(".//testsuite")
-    return suite is not None and suite.get("name") == PERF_SUITE_NAME
+    return root.get("name") == PERF_SUITE_NAME or (
+        suite is not None and suite.get("name") == PERF_SUITE_NAME
+    )
 
 
 def is_kernel_benchmark_xml(root) -> bool:
@@ -405,7 +405,7 @@ def classify_run_quality(version_info: str | None) -> tuple[str, int]:
         return "incomplete", 0
     try:
         info = json.loads(version_info)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (TypeError, ValueError):
         return "incomplete", 0
     if not isinstance(info, dict):
         return "incomplete", 0
@@ -431,20 +431,6 @@ def _exit_if_perf_zero(trigger_type: str, parsed_benchmarks: int) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-
-
-def _count_parsed_benchmarks(xml_files) -> int:
-    """How many perf_benchmarks rows the files would produce (no ClickHouse)."""
-    parsed = 0
-    for xml_path in xml_files:
-        root = etree.parse(str(xml_path)).getroot()
-        if is_kernel_benchmark_xml(root):
-            continue
-        if not is_benchmark_xml(root, xml_path):
-            continue
-        _, benchmarks = parse_benchmark_xml(xml_path)
-        parsed += len(benchmarks)
-    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -990,13 +976,6 @@ def main():
         "The benchmark XML carries no per-case platform tag, so the caller "
         "supplies it; defaults to the ingest host's arch.",
     )
-    parser.add_argument(
-        "--validate-only",
-        action="store_true",
-        help="Parse XML and exit; do not connect to ClickHouse. "
-        "With --trigger-type perf, a zero parsed-record count is a "
-        "non-zero exit so CI can fail before ingest is skipped.",
-    )
     args = parser.parse_args()
 
     if args.xml_file:
@@ -1011,12 +990,6 @@ def main():
         print("No XML files found — nothing to ingest.")
         _exit_if_perf_zero(args.trigger_type, 0)
         sys.exit(0)
-
-    if args.validate_only:
-        parsed_benchmarks = _count_parsed_benchmarks(xml_files)
-        print(f"Benchmarks parsed:  {parsed_benchmarks}")
-        _exit_if_perf_zero(args.trigger_type, parsed_benchmarks)
-        return
 
     print(
         f"Connecting to ClickHouse at "

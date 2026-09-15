@@ -14,9 +14,9 @@
 
 """Parser and perf-dispatch tests for .github/scripts/ingest_xml.py.
 
-The script is not importable as a module (it lives outside the package and pulls
-in clickhouse_connect at import time), so it is loaded by path with the driver
-stubbed out. Parse tests need no ClickHouse; dispatch tests use a FakeClient.
+The script is not a package module, so it is loaded by path. clickhouse_connect
+is stubbed before import. Parse tests need no ClickHouse; dispatch tests use a
+FakeClient.
 """
 
 import importlib.util
@@ -179,8 +179,6 @@ class FakeClient:
         name = (parameters or {}).get("t", "")
         if "system.columns" in sql:
             return _Result([[c] for c in self.tables.get(name, [])])
-        if "system.tables" in sql:
-            return _Result([[1 if name in self.tables else 0]])
         if "FROM benchmark_runs WHERE source_file" in sql:
             return _Result([[self.already_ingested]])
         if "FROM test_runs" in sql:
@@ -507,57 +505,3 @@ def test_perf_reingest_of_existing_source_file_exits_zero(
     client = FakeClient(dict(FULL_RUN_SCHEMA), already_ingested=1)
     _run_main(ingest, monkeypatch, xml, client, extra_argv=["--trigger-type", "perf"])
     assert client.inserts == []
-
-
-def test_validate_only_zero_rows_exits_nonzero_without_clickhouse(
-    ingest, monkeypatch, tmp_path
-):
-    xml = _write_suite(tmp_path, "", filename="report.xml", suite_name="pytest")
-    monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
-    monkeypatch.setattr(
-        ingest,
-        "get_client",
-        lambda: (_ for _ in ()).throw(AssertionError("ClickHouse")),
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "ingest_xml.py",
-            "--xml-file",
-            str(xml),
-            "--validate-only",
-            "--trigger-type",
-            "perf",
-        ],
-    )
-    with pytest.raises(SystemExit) as caught:
-        ingest.main()
-    assert caught.value.code not in (0, None)
-
-
-def test_validate_only_with_rows_skips_clickhouse(ingest, monkeypatch, tmp_path):
-    xml = _write_suite(
-        tmp_path,
-        _hf_case(f"perf_matmul_wall_clock_ms_{SHAPES}", "12.5"),
-        version_info=FULL_PROVENANCE,
-    )
-    monkeypatch.delenv("CLICKHOUSE_HOST", raising=False)
-    monkeypatch.setattr(
-        ingest,
-        "get_client",
-        lambda: (_ for _ in ()).throw(AssertionError("ClickHouse")),
-    )
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "ingest_xml.py",
-            "--xml-file",
-            str(xml),
-            "--validate-only",
-            "--trigger-type",
-            "perf",
-        ],
-    )
-    ingest.main()

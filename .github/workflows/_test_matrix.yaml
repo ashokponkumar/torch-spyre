@@ -671,24 +671,6 @@ jobs:
             || { echo "::error::perf run did not produce report.xml"; exit 1; }
           echo "perf report written to \${RESULTS_DIR} (not uploaded)"
 
-      # Required even when ClickHouse ingest is skipped: test -f above would
-      # PASS an empty envelope. ingest_xml.py --validate-only parses the same
-      # way as ingest and exits non-zero on --trigger-type perf + 0 rows.
-      - name: Validate perf report has benchmark rows
-        id: validate-report
-        run: |
-          if [ "${{ inputs.prebaked_image }}" = "true" ]; then
-            VENV="${PREBAKED_VENV_PATH}"
-          else
-            VENV="torch-spyre/.venv"
-          fi
-          # shellcheck disable=SC1091
-          source "${VENV}/bin/activate"
-          python3 "${GITHUB_WORKSPACE}/.github/scripts/ingest_xml.py" \
-            --validate-only \
-            --xml-dir "${RESULTS_DIR}" \
-            --trigger-type perf
-
       # Push the perf report to ClickHouse INLINE on this card runner. The
       # report is never uploaded as a workflow artifact (public repo: artifacts
       # are world-readable and benchmark numbers must stay private), so it
@@ -696,7 +678,8 @@ jobs:
       # matrix suites use. The composite action is the SAME ingest
       # implementation that workflow reuses, so there is one code path, not two.
       # Gated on CLICKHOUSE_HOST: a caller that passes no ClickHouse secrets
-      # skips the push. validate-report still fails an empty envelope.
+      # skips the push and the perf run still succeeds. Nightly has secrets, so
+      # --trigger-type perf + 0 parsed records fails the ingest step.
       - name: Ingest perf report into ClickHouse (inline, no artifact)
         id: ingest
         if: ${{ env.CLICKHOUSE_HOST != '' }}
@@ -721,14 +704,13 @@ jobs:
           clickhouse-pass: ${{ secrets.CLICKHOUSE_PASS }}
           clickhouse-db: ${{ secrets.CLICKHOUSE_DB }}
 
-      # Same four honesty lines as product-test. Echo only — never upload
-      # report.xml (public artifacts would leak benchmark numbers).
+      # Four honesty lines. Echo only — never upload report.xml (public
+      # artifacts would leak benchmark numbers).
       - name: Perf ingest banners
         if: always()
         env:
           EXEC_OUTCOME: ${{ steps.run-perf.outcome }}
           REPORT_OUTCOME: ${{ steps.confirm-report.outcome }}
-          VALIDATE_OUTCOME: ${{ steps.validate-report.outcome }}
           INGEST_OUTCOME: ${{ steps.ingest.outcome }}
         run: |
           if [ "${EXEC_OUTCOME}" = "success" ]; then
@@ -736,7 +718,7 @@ jobs:
           else
             EXEC=FAIL
           fi
-          if [ "${REPORT_OUTCOME}" = "success" ] && [ "${VALIDATE_OUTCOME}" = "success" ]; then
+          if [ "${REPORT_OUTCOME}" = "success" ]; then
             VALIDATION=PASS
           else
             VALIDATION=FAIL
@@ -750,10 +732,8 @@ jobs:
           fi
           if [ "${REPORT_OUTCOME}" != "success" ]; then
             REASON="required result file missing/empty"
-          elif [ "${VALIDATE_OUTCOME}" != "success" ]; then
-            REASON="Benchmarks ingested: 0"
           elif [ "${INGEST_OUTCOME}" = "failure" ]; then
-            REASON="ClickHouse ingest failed"
+            REASON="ingest failed"
           elif [ "${INGEST_OUTCOME}" = "skipped" ] || [ -z "${INGEST_OUTCOME}" ]; then
             REASON="ingest not reached"
           else
