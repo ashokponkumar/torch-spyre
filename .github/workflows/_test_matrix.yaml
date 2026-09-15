@@ -697,7 +697,9 @@ jobs:
           trigger-type: perf
           # perf runs on x86 GitHub-hosted runners, so the rows are x86_64.
           platform: x86_64
-          torch-spyre-dir: ${{ inputs.prebaked_image && env.PREBAKED_TORCH_SPYRE_DIR || 'torch-spyre' }}
+          # Workspace sparse-checkout of this ref's .github — not the baked
+          # tree. The benchmark still runs from PREBAKED_TORCH_SPYRE_DIR.
+          torch-spyre-dir: ${{ github.workspace }}
           clickhouse-host: ${{ secrets.CLICKHOUSE_HOST }}
           clickhouse-port: ${{ secrets.CLICKHOUSE_PORT }}
           clickhouse-user: ${{ secrets.CLICKHOUSE_USER }}
