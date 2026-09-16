@@ -446,7 +446,10 @@ jobs:
       - ${{ matrix.suite.runner || 'spyre_pf_x1' }}
       - ${{ inputs.runner_label }}
       - ${{ inputs.image_label }}
-    timeout-minutes: 60
+    # Card pools are contended enough that queued (not yet running) time can
+    # eat most of this budget before a pod is even assigned -- see
+    # test_multi_spyre below for the run that surfaced this.
+    timeout-minutes: 120
     env:
       # GitHub Actions sets CI=true which causes pytest inductor tests to fail.
       # Explicitly clear it.
@@ -1062,7 +1065,8 @@ jobs:
       - ${{ matrix.suite.runner || 'spyre_pf_x1' }}
       - ${{ inputs.runner_label }}
       - ${{ inputs.image_label }}
-    timeout-minutes: 60
+    # Matches the `test` job's timeout -- same pool contention applies.
+    timeout-minutes: 120
     env:
       CI: ''
       TORCH_SPYRE_TEST_TYPE: ${{ needs.generate_matrix.outputs.resolved_test_type }}
