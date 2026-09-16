@@ -807,7 +807,10 @@ jobs:
       - spyre_pf_x2
       - ${{ inputs.runner_label }}
       - ${{ inputs.image_label }}
-    timeout-minutes: 60
+    # 2x the single-card test job's timeout: the spyre_pf_x2 pool is smaller and
+    # more contended, so a queued (not yet running) job can burn most of this
+    # budget just waiting for a pod.
+    timeout-minutes: 120
     env:
       CI: ''
 
@@ -1169,7 +1172,8 @@ jobs:
       - spyre_pf_x2
       - ${{ inputs.runner_label }}
       - ${{ inputs.image_label }}
-    timeout-minutes: 60
+    # Matches test_multi_spyre's timeout -- same pool contention applies.
+    timeout-minutes: 120
     env:
       CI: ''
 

@@ -7,6 +7,7 @@ on:
     workflows:
       - tests # torch_spyre_tests.yaml: PR / push / merge-queue
       - tests-nightly
+      - integration-tests
     types: [completed]
 
 concurrency:
@@ -27,9 +28,13 @@ jobs:
       - spyre_pf_x0
       - linux
       - image_spyre_backend
-    # Only on an actual failure (not cancelled/superseded); run_attempt < 2 caps this at one retry.
+    # Matches the exact set of conclusions gh run rerun --failed itself acts on
+    # (failure/cancelled/timed_out/action_required) -- 'cancelled' in particular
+    # covers a job starved of a runner-pool pod (e.g. the small spyre_pf_x2
+    # pool), which is reported as cancelled with no runner ever assigned, not
+    # as a failure. run_attempt < 2 caps this at one retry either way.
     if: >-
-      github.event.workflow_run.conclusion == 'failure' &&
+      contains(fromJSON('["failure", "cancelled", "timed_out", "action_required"]'), github.event.workflow_run.conclusion) &&
       github.event.workflow_run.run_attempt < 2
     steps:
       - name: Setup the GitHub CLI
