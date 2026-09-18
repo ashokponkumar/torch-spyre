@@ -35,6 +35,12 @@ _CHLIB = _ROOT / "extensions" / "clickhouse-ingest"
 if str(_CHLIB) not in sys.path:
     sys.path.insert(0, str(_CHLIB))
 
+# Stubbed at MODULE scope, before the first library import below: the package __init__ imports
+# client.py, which imports clickhouse_connect, and the test venv has no ClickHouse driver -- these
+# tests parse logs and build rows, they never open a connection. Stubbing inside a fixture is too
+# late for a test that imports a library submodule directly.
+sys.modules.setdefault("clickhouse_connect", types.ModuleType("clickhouse_connect"))
+
 RAS_LINE = (
     'ERRR 15.09.2026 10:25:09.123456 [ras_base.hpp: 74] {"Device":"/dev/vfio/1",'
     '"action":"information","category":"configuration","code":"0xf40a",'
