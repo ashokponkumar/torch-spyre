@@ -68,8 +68,8 @@ def get_client(*, verify: bool = True):
 
 
 def client_summary() -> str:
-    """"host:port/database" for logging, read through the same resolver as the connection, so a
-    banner cannot claim a port the client did not use."""
+    """A host:port/database string for logging, read through the same resolver as the connection,
+    so a banner cannot claim a port the client did not use."""
     return (
         f"{_env('CLICKHOUSE_HOST')}:{_env('CLICKHOUSE_PORT', '443')}"
         f"/{_env('CLICKHOUSE_DB', 'spyre')}"
