@@ -53,8 +53,8 @@ from dataclasses import dataclass
 from typing import Any
 
 # The DDL's CHECK constraints, re-expressed. They cannot be read from the server at ingest
-# time, so they are duplicated here -- keep in step with functional_tests_v2.sql (status) and
-# artifacts_v2.sql (the rest).
+# time, so they are duplicated here -- keep in step with schema/functional_tests_v2.sql (status)
+# and schema/artifacts_v2.sql (the rest).
 STATUS_VALUES = frozenset({"passed", "failed", "error", "skipped", "xfail", "xpass"})
 KIND_VALUES = frozenset({"image", "rpm", "wheel", "generic"})
 ORIGIN_VALUES = frozenset({"built", "copied", "promoted", "upstream"})
@@ -157,7 +157,7 @@ class Table:
 
 
 # ── the v2 functional/benchmark tables, columns in DDL order ────────────────────────────
-# Source of truth: the CI pipeline's functional_tests_v2.sql.
+# Source of truth: schema/functional_tests_v2.sql, alongside this file.
 # `ts` is omitted from every one: it is DEFAULT now() and letting the server set it keeps the
 # ingest clock out of the data.
 
@@ -185,6 +185,9 @@ TEST_CASE_RUNS = Table(
     enums=(("status", STATUS_VALUES),),
 )
 
+# Source of truth: schema/benchmarks_v2.sql, alongside this file. `measurements` there is
+# Map(String, Array(Float64)) -- a metric's SAMPLES, not one number. This model does no type
+# coercion, so it accepts either shape and a scalar would be refused by the server, not here.
 BENCHMARKS = Table(
     name="benchmarks",
     columns=("benchmark_id", "component", "name", "tags", "props"),
@@ -209,9 +212,9 @@ BENCHMARK_RUNS = Table(
 )
 
 # ── the four v2 ARTIFACT tables, columns in DDL order ───────────────────────────────────
-# Source of truth: the CI pipeline's artifacts_v2.sql. Modelled here for the same reason as the
-# tables above -- the writer and the readers had no shared statement of a row's shape, and the
-# artifact tables are where that actually cost us.
+# Source of truth: schema/artifacts_v2.sql, alongside this file. Modelled here for the same
+# reason as the tables above -- the writer and the readers had no shared statement of a row's
+# shape, and the artifact tables are where that actually cost us.
 #
 # `ts` omitted throughout, as above: DEFAULT now() on the server.
 
