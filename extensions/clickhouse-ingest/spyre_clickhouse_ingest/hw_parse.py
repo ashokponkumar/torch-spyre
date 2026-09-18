@@ -200,6 +200,20 @@ RE_PY_PASSED = re.compile(r"(?P<n>\d+) passed")
 RE_PY_FAILED = re.compile(r"(?P<n>\d+) failed")
 RE_PY_ERROR = re.compile(r"(?P<n>\d+) error")
 
+# pytest's own terminal summary, e.g. "===== 4 failed, 96 passed in 120.5s =====".
+# Counts are read from THIS line only: a hardware log's device chatter ("retry queue: 3 errors
+# drained") and pytest's own per-file subtotals both contain "N failed"/"N passed" without being
+# the run's verdict. The second alternative accepts a summary printed without the "=" rule, which
+# a rule-only pattern would miss -- and missing it silently zeroes the counts.
+RE_PYTEST_SUMMARY = re.compile(
+    r"(?:={3,}[^=\n]*\b\d+ (?:passed|failed|error|skipped|xfailed|xpassed)\b[^=\n]*={3,})"
+    r"|(?:^\s*\d+ (?:passed|failed|error|skipped|xfailed|xpassed)\b[^\n]*\bin \d+(?:\.\d+)?s)"
+)
+
+# GHA emits this itself when the step's process exits non-zero, so it is read from the whole chunk:
+# it is the legitimate failure signal for a crash that never reached a pytest summary.
+RE_GHA_EXIT_ERROR = re.compile(r"Error: Process completed with exit code [^0]")
+
 # Phase fingerprints
 RE_PHASE_COLLECT = re.compile(r"ERROR collecting")
 RE_PHASE_FIRMWARE = re.compile(r"initialize_firmware\.cpp")
@@ -271,6 +285,19 @@ def _clean(s: str) -> str:
 def _first_env(pattern: re.Pattern, text: str) -> str:
     m = pattern.search(text)
     return _clean(m.group("v")) if m else ""
+
+
+def _pytest_summary_line(chunk_lines: list) -> str:
+    """The LAST pytest terminal-summary line in the chunk, or "".
+
+    Last rather than first: with reruns or --last-failed a chunk holds several summaries, and the
+    final one is the attempt's verdict. An earlier one may also be a captured-output echo.
+    """
+    found = ""
+    for line in chunk_lines:
+        if RE_PYTEST_SUMMARY.search(line):
+            found = line
+    return found
 
 
 def _first_int(pattern: re.Pattern, text: str, group: str = "n") -> int:
@@ -519,6 +546,10 @@ def parse_log(
                 rec["attempt_start_ts"] = ts
                 break
 
+        # Computed once: both the outcome fallback below and the pytest counts further down read
+        # their numbers from this one line.
+        summary = _pytest_summary_line(chunk_lines)
+
         # -------------------- Outcome --------------------
         for line in chunk_lines:
             mf = RE_ATTEMPT_FAILED.search(line)
@@ -530,16 +561,14 @@ def parse_log(
                 rec["outcome"] = "passed"
                 break
         if rec["outcome"] == "unknown":
-            # Prefer explicit pytest summary lines over generic keyword matching.
-            # "N passed" with no "failed" or "error" in the pytest summary → passed.
-            # GHA-level "Error: Process completed" line → failed.
-            # Avoid false positives from INFO/WARN log lines containing "error".
-            has_pytest_passed = bool(re.search(r"\d+ passed", chunk))
-            has_pytest_failed = bool(re.search(r"\d+ failed", chunk))
-            has_pytest_error = bool(re.search(r"\d+ error", chunk))
-            has_gha_exit_error = bool(
-                re.search(r"Error: Process completed with exit code [^0]", chunk)
-            )
+            # No attempt banner, so the verdict comes from pytest's summary LINE -- not from the
+            # whole chunk. Searching the chunk let a device log's "3 errors drained" mark a passing
+            # suite as failed. The GHA exit line stays chunk-wide: it is the crash signal for an
+            # attempt that never printed a summary.
+            has_pytest_passed = bool(RE_PY_PASSED.search(summary))
+            has_pytest_failed = bool(RE_PY_FAILED.search(summary))
+            has_pytest_error = bool(RE_PY_ERROR.search(summary))
+            has_gha_exit_error = bool(RE_GHA_EXIT_ERROR.search(chunk))
             if has_pytest_passed and not has_pytest_failed and not has_pytest_error:
                 rec["outcome"] = "passed"
             elif has_pytest_failed or has_pytest_error or has_gha_exit_error:
@@ -570,9 +599,17 @@ def parse_log(
             rec["first_error_ts"] = first.get("timestamp", "")
 
         # -------------------- Failure reason + detail ----------------------------
-        crash_detail = _extract_crash_detail(chunk_lines, chunk)
+        # A RAS event on a PASSING attempt is a recovered fault: real hardware data worth keeping in
+        # the ras_* columns above, but not a reason the attempt failed. Without this guard a passing
+        # run counts as a hardware failure in any dashboard filtering on failure_reason != 'none'.
+        ras_failure = bool(ras_events) and rec["outcome"] == "failed"
 
-        if ras_events:
+        # Only consumed by the `elif` below, which requires no RAS events. Computing it eagerly ran
+        # the signal/heap scan plus a 10-frame backtrace walk over the whole chunk on exactly the
+        # common hardware-failure path, then discarded it. Tied to the branch order below.
+        crash_detail = None if ras_events else _extract_crash_detail(chunk_lines, chunk)
+
+        if ras_failure:
             rec["failure_reason"] = _ras_name_to_reason(rec["ras_name"])
             # failure_reason_detail: the full parsed primary RAS event as a dict,
             # with timestamp and raw blob removed to keep it clean.
@@ -594,9 +631,9 @@ def parse_log(
         # ---------------- Failure phase --------------------
         if RE_PHASE_COLLECT.search(chunk):
             rec["failure_phase"] = "collection"
-        elif RE_PHASE_FIRMWARE.search(chunk) and ras_events:
+        elif RE_PHASE_FIRMWARE.search(chunk) and ras_failure:
             rec["failure_phase"] = "firmware_init"
-        elif RE_PHASE_RUNTIME.search(chunk) and ras_events:
+        elif RE_PHASE_RUNTIME.search(chunk) and ras_failure:
             rec["failure_phase"] = "runtime_init"
         elif rec["failure_reason"] != "none":
             rec["failure_phase"] = "execution"
@@ -643,18 +680,14 @@ def parse_log(
             rec["chip_chipx"] = m_coords["chipx"]
 
         # -------------------- Pytest stats --------------------------------
+        # "collected N items" is unambiguous, so it may come from anywhere in the chunk.
         rec["tests_collected"] = _first_int(RE_COLLECTED, chunk)
-        for line in chunk_lines:
-            if " passed" in line or " failed" in line or " error" in line:
-                mp = RE_PY_PASSED.search(line)
-                mf2 = RE_PY_FAILED.search(line)
-                me = RE_PY_ERROR.search(line)
-                if mp:
-                    rec["tests_passed"] = int(mp.group("n"))
-                if mf2:
-                    rec["tests_failed"] = int(mf2.group("n"))
-                if me:
-                    rec["tests_error"] = int(me.group("n"))
+        # The rest come from the summary line only. Scanning every line and keeping the last match
+        # let a per-file subtotal, or a captured echo of an earlier summary, overwrite the real
+        # total. With no summary these stay 0: an honest zero beats a confident wrong number.
+        rec["tests_passed"] = _first_int(RE_PY_PASSED, summary)
+        rec["tests_failed"] = _first_int(RE_PY_FAILED, summary)
+        rec["tests_error"] = _first_int(RE_PY_ERROR, summary)
 
         # ---------------------------- Stall info ----------------------------
         stall_secs = [
