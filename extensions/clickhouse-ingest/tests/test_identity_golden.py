@@ -21,12 +21,12 @@ and the product-repo ingests. A drift does not raise; it silently stops rows joi
 import uuid
 
 import pytest
-
 from spyre_clickhouse_ingest import (
     V2_NAMESPACE,
+    v2_artifact_id,
+    v2_benchmark_id,
     v2_canonical_arch,
     v2_component,
-    v2_artifact_id,
     v2_gha_artifact_id,
     v2_run_id,
     v2_test_case_id,
@@ -188,3 +188,77 @@ def test_gha_artifact_id_lands_in_the_same_column_as_a_built_one():
     # GHA-shaped identity that artifact_results would need another column for.
     got = v2_gha_artifact_id("torch-spyre", "base:1", "pkg-a", "amd64")
     assert uuid.UUID(got).version == 5
+
+
+# The vLLM perf writer's discriminator set. Positional: reordering re-keys every benchmark.
+_VLLM_KEYS = ("record_type", "run_mode", "tensor_parallel", "input_len", "output_len")
+
+
+def test_benchmark_id_golden():
+    assert (
+        v2_benchmark_id(
+            "spyre-inference",
+            "serve_granite33-8b_tp1_in64_out64",
+            [],
+            {"run_mode": "serve", "tensor_parallel": "1"},
+            _VLLM_KEYS,
+        )
+        == "3a681ed6-dc5a-517a-a1c6-bc3367ce815c"
+    )
+    # The hashed string this pins, spelled out so a drift is diagnosable without a debugger:
+    # 'spyre-inference|serve_granite33-8b_tp1_in64_out64||record_type=,run_mode=serve,
+    #  tensor_parallel=1,input_len=,output_len='
+    assert uuid.uuid5(
+        V2_NAMESPACE,
+        "spyre-inference|serve_granite33-8b_tp1_in64_out64||"
+        "record_type=,run_mode=serve,tensor_parallel=1,input_len=,output_len=",
+    ) == uuid.UUID("3a681ed6-dc5a-517a-a1c6-bc3367ce815c")
+
+
+def test_benchmark_id_normalises_component():
+    # Every other field passes _v2_norm; a raw component made 'Torch-Spyre' a different
+    # benchmark from 'torch-spyre'.
+    assert v2_benchmark_id("Torch-Spyre", "matmul", [], {}, ()) == v2_benchmark_id(
+        "torch-spyre", "matmul", [], {}, ()
+    )
+
+
+def test_benchmark_id_refuses_an_incomplete_key():
+    # An empty field still hashes to a real uuid, so every unidentifiable benchmark would
+    # collide on ONE id rather than merely being orphaned.
+    assert v2_benchmark_id("", "n", [], {}, ()) == ""
+    assert v2_benchmark_id("c", "", [], {}, ()) == ""
+
+
+def test_benchmark_id_is_tag_order_independent():
+    # tags are a set; an unsorted join makes two writers disagree about one benchmark.
+    a = v2_benchmark_id("c", "n", ["b", "a"], {}, ())
+    b = v2_benchmark_id("c", "n", ["a", "b", "a"], {}, ())
+    assert a == b != ""
+
+
+def test_backend_is_not_part_of_the_identity():
+    # backend is the axis a cross-backend comparison pivots ON: hashing it would make the two
+    # sides of one comparison different benchmarks.
+    cpu = v2_benchmark_id("c", "n", [], {"backend": "cpu"}, ())
+    spyre = v2_benchmark_id("c", "n", [], {"backend": "spyre"}, ())
+    assert cpu == spyre
+
+
+def test_producers_with_different_disc_keys_cannot_collide():
+    # component leads the hash, which is what lets each producer keep its own key set.
+    kernel = v2_benchmark_id(
+        "torch-spyre", "x", [], {"record_type": "op"}, ("record_type", "config_name")
+    )
+    vllm = v2_benchmark_id(
+        "spyre-inference", "x", [], {"record_type": "op"}, _VLLM_KEYS
+    )
+    assert kernel != vllm
+
+
+def test_disc_key_order_is_positional():
+    # disc_keys is the KEY ORDER in the hash, so a reorder mints new ids -- pinned so a
+    # well-meaning alphabetisation of a producer's tuple cannot pass silently.
+    a = v2_benchmark_id("c", "n", [], {"a": "1", "b": "2"}, ("a", "b"))
+    b = v2_benchmark_id("c", "n", [], {"a": "1", "b": "2"}, ("b", "a"))
+    assert a != b
