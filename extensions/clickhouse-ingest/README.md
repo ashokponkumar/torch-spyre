@@ -30,11 +30,16 @@ uses. Pin a tag, not `@main`.
 | `client.py` | `get_client`, `v2_database`, `v2_tables_present` |
 | `v2_writer.py` | `insert_v2`, `v2_already_ingested` |
 | `junit.py` | JUnit helpers + CI run-coordinate resolution |
+| `hw_parse.py` | GHA log → `hw_failure_diagnostics` records (RAS events, phases, pytest counts) |
+| `hw_schema.py` | `hw_failure_diagnostics` columns + its `ADD COLUMN IF NOT EXISTS` migration |
+| `hw_diagnostics.py` | `build_row`/`insert_rows` for `hw_failure_diagnostics` |
 
 ## What is deliberately NOT here
 
-- **v1 write paths.** The product repos write v1 to differently-named tables (`hf_test_runs` vs
-  `test_runs`), so those stay per-repo until v1 is retired.
+- **v1 write paths whose TARGET TABLE differs per repo.** `hf_test_runs` vs `test_runs` cannot share
+  a writer, so those stay per-repo until v1 is retired. Name divergence is the blocker, not the v1
+  generation as such: `hw_failure_diagnostics` is the same table with the same columns in every repo,
+  which is why its parse/ingest lives here despite being v1.
 - **A dependency on `torch_spyre`.** Installing that to obtain a schema module would pull
   torch/numpy/ortools, and ortools has no ppc64le/s390x wheel — the ingest would break on p/z.
 
