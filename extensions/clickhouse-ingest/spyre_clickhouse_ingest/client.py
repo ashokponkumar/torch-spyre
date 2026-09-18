@@ -48,15 +48,20 @@ def v2_database() -> str:
     return os.environ.get("CLICKHOUSE_DB_V2", "").strip()
 
 
-def v2_tables_present(client, db: str) -> bool:
-    """v2 write path is skipped unless BOTH tables exist, so this script can be
+def v2_tables_present(client, db: str, tables=None) -> bool:
+    """v2 write path is skipped unless every table it needs exists, so this script can be
     deployed before the migration without erroring on every run.
 
-    Names come from the schema model, not string literals: this file is copied across the
-    product repos and the copies are compared for MEANING, so a hardcoded name here could
-    drift from the table it is meant to check while still looking correct.
+    `tables` defaults to the functional pair, which is what the JUnit ingests need. A caller
+    writing benchmarks passes that pair instead: the two write paths landed in separate
+    migrations, so a benchmark writer gated on the functional tables would read "v2 is ready"
+    and then fail its own insert.
+
+    Names come from the schema model, not string literals: this check is mirrored in the
+    product repos, and a hardcoded name could drift from the table it is meant to check while
+    still looking correct.
     """
-    return all(
-        bool(client.command(f"EXISTS TABLE {t.qualified(db)}"))
-        for t in (schema.TEST_CASES, schema.TEST_CASE_RUNS)
-    )
+    for t in tables or (schema.TEST_CASES, schema.TEST_CASE_RUNS):
+        if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):
+            return False
+    return True

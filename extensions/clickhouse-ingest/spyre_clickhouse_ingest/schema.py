@@ -48,9 +48,9 @@ re-keys the warehouse and silently breaks v2_already_ingested dedup, producing d
 rather than an error.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Sequence
 
 # The DDL's CHECK constraints, re-expressed. They cannot be read from the server at ingest
 # time, so they are duplicated here -- keep in step with functional_tests_v2.sql (status) and
