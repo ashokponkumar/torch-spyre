@@ -18,7 +18,7 @@ Kept out of the `torch_spyre` package on purpose: depending on it would pull tor
 and ortools has no ppc64le/s390x wheel, so the ingest could not run on p/z.
 """
 
-from . import hw_parse, hw_schema, schema
+from . import gha_logs, hw_parse, hw_schema, schema
 from .client import client_summary, get_client, v2_database, v2_tables_present
 from .hw_diagnostics import (
     RunContext,
@@ -61,6 +61,7 @@ __all__ = [
     "client_summary",
     "ensure_extra_columns",
     "extract_properties",
+    "gha_logs",
     "filter_suite_records",
     "get_client",
     "hw_parse",

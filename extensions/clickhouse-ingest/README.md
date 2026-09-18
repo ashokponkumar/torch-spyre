@@ -33,6 +33,7 @@ uses. Pin a tag, not `@main`.
 | `hw_parse.py` | GHA log → `hw_failure_diagnostics` records (RAS events, phases, pytest counts) |
 | `hw_schema.py` | `hw_failure_diagnostics` columns + its `ADD COLUMN IF NOT EXISTS` migration |
 | `hw_diagnostics.py` | `build_row`/`insert_rows` for `hw_failure_diagnostics` |
+| `gha_logs.py` | fetching GHA job logs via `gh`, with transient-5xx retry |
 
 ## What is deliberately NOT here
 
