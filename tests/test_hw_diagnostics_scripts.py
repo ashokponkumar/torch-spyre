@@ -43,8 +43,10 @@ RAS_LINE = (
 
 
 def _load(name: str):
+    """Load a .github/scripts entry point by path -- a script, not an importable package."""
     sys.modules.setdefault("clickhouse_connect", types.ModuleType("clickhouse_connect"))
     spec = importlib.util.spec_from_file_location(name, _SCRIPTS / f"{name}.py")
+    assert spec is not None and spec.loader is not None, name
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
