@@ -10,16 +10,31 @@ normalisation step produces ids that silently never join — no error, just miss
 
 ## Install
 
-No PyPI or Artifactory publish. Every consumer installs it straight from the repo, pinned:
+No PyPI or Artifactory publish. Every consumer installs it straight from the repo.
+
+Inside torch-spyre, install from the CHECKOUT, so the library is always the same commit as the
+script importing it:
+
+```
+uv pip install "${GITHUB_WORKSPACE}/extensions/clickhouse-ingest"
+```
+
+From another repo, where that path does not exist, install from git at `@main`:
 
 ```
 uv run --no-project \
-  --with "git+https://github.com/torch-spyre/torch-spyre@<tag>#subdirectory=extensions/clickhouse-ingest" \
+  --with "git+https://github.com/torch-spyre/torch-spyre@main#subdirectory=extensions/clickhouse-ingest" \
   ...
 ```
 
 Verified on a build node with the same `uv run --no-project --with` form the baked-image ingest
-uses. Pin a tag, not `@main`.
+uses.
+
+`@main` rather than a tag, deliberately: this library's whole purpose is that ONE definition of
+the derived ids runs everywhere. A consumer pinned to an older tag is a second definition again --
+it just fails later and less visibly than a copied file. The identity functions are covered by
+golden-value tests (`tests/test_identity_golden.py`), so `@main` moving is not supposed to be able
+to change an id; if it ever does, those tests are the thing that must stop it.
 
 ## Layout
 

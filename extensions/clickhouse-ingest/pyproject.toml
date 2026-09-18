@@ -1,6 +1,6 @@
 [project]
 name = "spyre-clickhouse-ingest"
-version = "0.2.0"
+version = "0.1.0"
 description = "Shared schema-v2 ClickHouse schema, identity and write path for the Spyre CI ingests"
 readme = "README.md"
 requires-python = ">=3.11"
