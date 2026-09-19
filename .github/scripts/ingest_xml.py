@@ -44,7 +44,6 @@ from spyre_clickhouse_ingest import (
     insert_v2,
     promote_xpass,
     v2_already_ingested,
-    v2_benchmark_id,
     v2_benchmarks_already_ingested,
     v2_canonical_arch,
     v2_component,
