@@ -1,57 +1,49 @@
--- ============================================================================
--- vLLM benchmark results in upstream pytorch/test-infra's `oss_ci_benchmark_v3` shape,
--- plus the dropdown table upstream derives from it.
+-- vLLM benchmark results in upstream pytorch/test-infra's `oss_ci_benchmark_v3` shape, plus
+-- the dropdown table upstream derives from it.
 --
--- WHY THIS SHAPE. vLLM perf reaches us through vLLM's own bench harness, so the record shape is
--- an UPSTREAM CONTRACT we do not control. Matching it is what lets the PyTorch HUD read our
--- numbers with no query changes: verified 2026-09-19 against a live HUD, where upstream's four
--- benchmark queries return 5,998 / 77 / 146 / 146 rows with only the DATABASE redirected.
+-- WHY THIS SHAPE. vLLM perf reaches us through vLLM's own bench harness, so the record shape
+-- is an upstream contract we do not control. Matching it is what lets the PyTorch HUD read
+-- our numbers with no query changes, with only the DATABASE redirected.
 --
 -- THE TABLE NAMES ARE LOAD-BEARING. The HUD resolves these tables in TypeScript, not only in
 -- its .sql files, and its CLICKHOUSE_BENCHMARK_DATABASE setting redirects the database while
--- keeping the names. So they must be spelled `oss_ci_benchmark_v3` and
--- `oss_ci_benchmark_metadata`, and they must be REAL MergeTree tables: exposing the names as
--- plain VIEWs over differently-named tables fails with "Code 182: Storage View does not support
--- PREWHERE", because upstream's metadata query builder emits a PREWHERE. That failure is
--- partial and therefore easy to misread -- the saved .sql queries carry no PREWHERE and keep
--- working, so only the dashboard's dropdowns break.
+-- keeping the names. They must be spelled `oss_ci_benchmark_v3` and
+-- `oss_ci_benchmark_metadata`, and must be real MergeTree tables: exposing the names as plain
+-- VIEWs fails with "Code 182: Storage View does not support PREWHERE", because upstream's
+-- metadata query builder emits one. That failure is partial and so easy to misread -- the
+-- saved .sql queries carry no PREWHERE and keep working, so only the dropdowns break.
 --
--- FED BY MATERIALIZED VIEW, NOT BY A SECOND INSERT. benchmark_runs is the one written perf
--- fact; both tables here are projections of it. An MV's target is a real table, so it satisfies
--- the PREWHERE constraint above while keeping a single source of truth and a single insert.
--- An earlier revision of this file described a dual-write ("the vLLM writer populates BOTH from
--- one parse"); that is superseded -- the MV direction is lossless and one writer is fewer
--- things to keep in agreement.
+-- FED BY MATERIALIZED VIEW, NOT A SECOND INSERT. benchmark_runs is the one written perf fact
+-- and both tables here are projections of it. An MV's target is a real table, satisfying the
+-- PREWHERE constraint above while keeping a single source of truth and a single insert.
 --
--- WHAT WE ADD. `run_id` is OURS, not upstream's. Upstream has no artifact concept -- its
+-- WHAT WE ADD. `run_id` is ours, not upstream's. Upstream has no artifact concept -- its
 -- `dependencies` Map is a provenance hint, not a content identity -- so an upstream-shaped
 -- table alone cannot join artifact_results. This one column is the difference between
--- HUD-compatible and HUD-compatible-AND-joinable.
+-- HUD-compatible and HUD-compatible-and-joinable.
 --
 -- MVs FIRE ON INSERT ONLY, so these tables cannot be rebuilt from rows already in
 -- benchmark_runs; a definition change means re-inserting. Upstream ships a backfill INSERT
 -- beside its own MV for this reason, and the same recipe applies here.
--- ============================================================================
 
 -- ── upstream's record table ─────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS oss_ci_benchmark_v3
 (
-    -- Our join key: uuid5(NS, "{source}|{external_run_id}|{arch}|{test_type}"), the SAME value
-    -- artifact_results.run_id carries. On the Jenkins path params.RUN_ID is ALREADY this uuid --
-    -- pass it VERBATIM; re-hashing an already-hashed id mints a third identity that joins to
-    -- nothing.
+    -- Our join key: uuid5(NS, "{source}|{external_run_id}|{arch}|{test_type}"), the same value
+    -- artifact_results.run_id carries. On the Jenkins path params.RUN_ID is already this uuid
+    -- -- pass it verbatim; re-hashing it mints a third identity that joins to nothing.
     run_id         UUID,
 
     -- SECONDS, not milliseconds. Every upstream query reads this with toUnixTimestamp() /
-    -- fromUnixTimestamp() and no intDiv, so milliseconds put every row ~277 years in the future
-    -- and each query returns zero rows -- silently, since the filter simply matches nothing.
+    -- fromUnixTimestamp() and no intDiv, so milliseconds put every row centuries in the future
+    -- and each query silently returns nothing.
     timestamp      Int64,
     schema_version LowCardinality(String) DEFAULT 'v3',
 
-    -- A REGISTERED benchmark id, not the benchmark's own name. The HUD routes
-    -- /benchmark/v3/dashboard/<id> against this and refuses an unregistered one
-    -- ("BenchmarkId ... is not registered in the repo"), so a per-benchmark name makes the
-    -- dashboard unreachable. The real name travels in benchmark.extra_info['benchmark_name'].
+    -- A REGISTERED benchmark id, not the benchmark's own name: the HUD routes
+    -- /benchmark/v3/dashboard/<id> against this and refuses an unregistered one, so a
+    -- per-benchmark name makes the dashboard unreachable. The real name travels in
+    -- benchmark.extra_info['benchmark_name'].
     name           String,
 
     repo           LowCardinality(String),
@@ -63,11 +55,9 @@ CREATE TABLE IF NOT EXISTS oss_ci_benchmark_v3
 
     -- Upstream's full 11-field tuple. The GPU fields are empty for a Spyre run, but trimming
     -- them breaks upstream's own metadata MV, which reads runners[1].'cpu_info' as an arch
-    -- fallback: a 2-field tuple fails with "Code 10: Tuple doesn't have element with name
-    -- 'cpu_info'". Carrying unused fields is the cost of reading upstream's queries unmodified.
-    --
-    -- runners[1] is (name = DEVICE, type = ARCH). Upstream's MV and its _llms query both read
-    -- it that way, and the dashboard filters on device=/arch=, so swapping the two empties the
+    -- fallback. Carrying unused fields is the cost of reading upstream's queries unmodified.
+    -- runners[1] is (name = DEVICE, type = ARCH): upstream's MV and its _llms query both read
+    -- it that way and the dashboard filters on device=/arch=, so swapping the two empties the
     -- page with no error.
     runners        Array(Tuple(
                        name String, type String, cpu_info String, cpu_count UInt32,
@@ -87,9 +77,8 @@ CREATE TABLE IF NOT EXISTS oss_ci_benchmark_v3
     dependencies   Map(String, Tuple(repo String, branch String, sha String, version String,
                                      extra_info Map(String, String))),
 
-    -- benchmark_values is an ARRAY because a metric measured n times is n values: the HUD
-    -- computes an arithmetic AND a geometric mean from it, and the two can only differ if the
-    -- samples survive.
+    -- An array because a metric measured n times is n values: the HUD computes both an
+    -- arithmetic and a geometric mean, which can only differ if the samples survive.
     metric         Tuple(name String, benchmark_values Array(Float32), target_value Float32,
                          extra_info Map(String, String))
 )
@@ -103,8 +92,8 @@ ORDER BY (timestamp, head_branch, head_sha, workflow_id, job_id);
 -- wants one row per metric, so the Map is fanned out here.
 --
 -- The props this reads (repo, head_branch, head_sha, workflow_id, arch, hardware_type) must be
--- written onto benchmark_runs by the ingest. They are deliberately not re-derived here: this
--- view cannot see the CI coordinates, and guessing them would put a wrong commit on a chart.
+-- written onto benchmark_runs by the ingest, not re-derived here: this view cannot see the CI
+-- coordinates, and guessing them would put a wrong commit on a chart.
 CREATE MATERIALIZED VIEW IF NOT EXISTS oss_ci_benchmark_v3_mv TO oss_ci_benchmark_v3 AS
 SELECT
     r.run_id                               AS run_id,

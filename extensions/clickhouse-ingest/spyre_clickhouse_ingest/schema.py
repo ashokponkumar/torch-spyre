@@ -186,8 +186,8 @@ TEST_CASE_RUNS = Table(
 )
 
 # Source of truth: schema/30-benchmarks.sql, alongside this file. `measurements` there is
-# Map(String, Array(Float64)) -- a metric's SAMPLES, not one number. This model does no type
-# coercion, so it accepts either shape and a scalar would be refused by the server, not here.
+# Map(String, Array(Float64)) -- a metric's samples, not one number; this model does no type
+# coercion, so a scalar is refused by the server rather than here.
 BENCHMARKS = Table(
     name="benchmarks",
     columns=("benchmark_id", "component", "name", "tags", "props"),

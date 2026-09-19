@@ -1,6 +1,6 @@
--- Views over benchmarks / benchmark_runs. Two jobs: present the wide shape the
--- dashboard already speaks (so ~12 query sites re-point rather than get rewritten),
--- and derive the two verdicts v1 stored as columns.
+-- Views over benchmarks / benchmark_runs. Two jobs: present the wide shape the dashboard
+-- already speaks, so its query sites re-point rather than get rewritten, and derive the two
+-- verdicts v1 stored as columns.
 
 -- Every benchmark measurement with its identity, run context and tag resolved.
 -- The base join for everything below.
@@ -15,27 +15,25 @@ SELECT
     b.props['input_shapes'] AS input_shapes,
     b.props['run_mode']     AS run_mode,
     b.props['kernel_name']  AS kernel_name,
-    -- measurements is Map(String, Array(Float64)) on the table: every SAMPLE. Reduced to one
-    -- value per metric HERE, under the same column name, so the four views below and every
-    -- dashboard query keep addressing scalars and their declared Float64 types stay honest.
-    -- Reducing in one place is the point -- doing it per view would put four independent
-    -- definitions of "the value of a metric" in the schema. arrayAvg, not the first element:
-    -- the mean of the samples IS the value, and samples[1] would depend on harness ordering.
+    -- measurements is Map(String, Array(Float64)) on the table: every sample. Reduced to one
+    -- value per metric here, under the same column name, so the views below and every
+    -- dashboard query keep addressing scalars. Reducing in one place is the point -- per view
+    -- would put four definitions of "the value of a metric" in the schema. arrayAvg, not
+    -- samples[1], which would depend on harness ordering.
     mapApply((k, v) -> (k, arrayAvg(v)), r.measurements) AS measurements,
-    -- The samples themselves, for a variance, a percentile, or a geomean that actually
-    -- differs from the mean. The only new name a caller has to learn.
+    -- The samples themselves, for a variance, percentile, or a geomean that differs from the
+    -- mean. The only new name a caller has to learn.
     r.measurements AS samples,
     r.iterations AS iterations,
     r.props AS run_props,
     ar.artifact_id, ar.arch, ar.test_type, ar.state
 FROM benchmark_runs AS r
 INNER JOIN benchmarks AS b USING (benchmark_id)
--- Deduped to ONE artifact_results row per run before joining. artifact_results is a plain
--- MergeTree with no dedup key, so a re-ingested leg leaves two identical rows and a naive
--- join multiplies every measurement by that count -- observed inflating 45,133 facts to
--- 50,170 in the view, which then over-counts every mean and every regression pair. argMax
--- on ts keeps the latest row per (run_id, result_kind, test_type), which is also the right
--- answer when a leg was genuinely retried.
+-- Deduped to one artifact_results row per run before joining: that table is a plain MergeTree
+-- with no dedup key, so a re-ingested leg leaves two identical rows and a naive join
+-- multiplies every measurement, over-counting every mean and regression pair. argMax on ts
+-- keeps the latest row per (run_id, result_kind, test_type), which is also the right answer
+-- when a leg was genuinely retried.
 LEFT JOIN (
     SELECT run_id,
            argMax(artifact_id, ts) AS artifact_id,
@@ -46,11 +44,11 @@ LEFT JOIN (
     GROUP BY run_id
 ) AS ar USING (run_id);
 
--- The wide projection the dashboard's METRIC_LABELS dict expects. Map keys become
--- named columns here so performance.py keeps addressing metrics by name.
--- Every metric is NULL when the key is absent, never 0: a missing Map key returns
--- Float64's zero default, and a 0 flowing into the dashboard's +/-5% delta reads as
--- a 100% regression instead of "not measured".
+-- The wide projection the dashboard's METRIC_LABELS dict expects: Map keys become named
+-- columns so performance.py keeps addressing metrics by name.
+-- Every metric is NULL when absent, never 0 -- a missing Map key returns Float64's zero
+-- default, and a 0 in the dashboard's +/-5% delta reads as a 100% regression rather than
+-- "not measured".
 CREATE VIEW IF NOT EXISTS v_benchmark_wide AS
 SELECT
     run_id, benchmark_id, component, backend, artifact_id, arch, ts,
@@ -67,10 +65,9 @@ SELECT
     iterations
 FROM v_benchmark_results_enriched;
 
--- Replaces perf_kernels.ratio, which v1 stored as a third column beside the two it
--- divides. torch_spyre_ms and sendnn_ms are co-populated in 0 of 5,722 v1 rows
--- because they were never one row: same benchmark, two backends. Here that is a
--- self-join, and the ratio cannot disagree with its operands.
+-- Replaces perf_kernels.ratio, which v1 stored as a third column beside the two it divides.
+-- Its torch_spyre_ms and sendnn_ms were never one row -- same benchmark, two backends. Here
+-- that is a self-join, and the ratio cannot disagree with its operands.
 CREATE VIEW IF NOT EXISTS v_benchmark_backend_compare AS
 SELECT
     t.run_id, t.benchmark_id, t.component, t.name, t.arch, t.record_type, t.kernel_name,
@@ -85,17 +82,13 @@ INNER JOIN v_benchmark_results_enriched AS s
         ON t.run_id = s.run_id AND t.benchmark_id = s.benchmark_id
 WHERE t.backend != s.backend;
 
--- Replaces perf_benchmarks.regression_status (255/297 v1 op rows carry one) with a verdict
--- computed against the IMMEDIATELY PRECEDING run of the same benchmark+backend+arch, so what
--- it was compared against is always recoverable. Threshold matches the dashboard's +/-5%.
---
--- Consecutive pairs via a window function, NOT an all-pairs self-join. The self-join version
--- compared every run to every other and cost runs^2: 3.7M rows and 36MiB from 45k facts at
--- 24.7 runs per benchmark (worst 95), and history only grows. "Did this run regress" needs
--- one pair per run, which is what lagInFrame gives -- and it also removes the symmetry trap
--- of the old view, where every pair appeared in both directions and a caller that forgot to
--- constrain baseline_run_id double-reported every finding.
---
+-- Replaces perf_benchmarks.regression_status with a verdict computed against the immediately
+-- preceding run of the same benchmark+backend+arch, so what it was compared against stays
+-- recoverable. Threshold matches the dashboard's +/-5%.
+-- Consecutive pairs via a window function, not an all-pairs self-join: that cost runs^2 and
+-- grows with history, where "did this run regress" needs one pair per run. It also removes
+-- the self-join's symmetry trap, where every pair appeared in both directions and a caller
+-- forgetting to constrain baseline_run_id double-reported every finding.
 -- A metric absent from the previous run yields NULL, never a verdict: an unmeasured baseline
 -- is not evidence of a regression.
 CREATE VIEW IF NOT EXISTS v_benchmark_regression AS
@@ -129,8 +122,7 @@ FROM (
 )
 WHERE baseline_run_id != run_id;
 
--- Per-arch trend for one benchmark+metric: the platform comparison the dashboard
--- draws, at every grain it draws it.
+-- Per-arch trend for one benchmark+metric: the platform comparison the dashboard draws.
 CREATE VIEW IF NOT EXISTS v_benchmark_trend AS
 SELECT
     toStartOfDay(ts) AS day, benchmark_id, name, component, backend, arch,
