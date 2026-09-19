@@ -72,11 +72,11 @@ CREATE VIEW IF NOT EXISTS v_benchmark_backend_compare AS
 SELECT
     t.run_id, t.benchmark_id, t.component, t.name, t.arch, t.record_type, t.kernel_name,
     t.backend AS backend, s.backend AS baseline_backend,
-    t.measurements['duration_ms'] AS duration_ms,
-    s.measurements['duration_ms'] AS baseline_duration_ms,
-    if(s.measurements['duration_ms'] > 0,
-       t.measurements['duration_ms'] / s.measurements['duration_ms'],
-       NULL) AS ratio
+    -- NULL, not the Map zero-default, on an absent key: 0/baseline reads as "100% faster"
+    -- rather than "not measured". Same guard as v_benchmark_wide.
+    if(has(mapKeys(t.measurements), 'duration_ms'), t.measurements['duration_ms'], NULL) AS duration_ms,
+    if(has(mapKeys(s.measurements), 'duration_ms'), s.measurements['duration_ms'], NULL) AS baseline_duration_ms,
+    duration_ms / nullIf(baseline_duration_ms, 0) AS ratio
 FROM v_benchmark_results_enriched AS t
 INNER JOIN v_benchmark_results_enriched AS s
         ON t.run_id = s.run_id AND t.benchmark_id = s.benchmark_id

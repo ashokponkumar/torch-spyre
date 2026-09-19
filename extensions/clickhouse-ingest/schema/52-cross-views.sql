@@ -58,10 +58,9 @@ GROUP BY day, arch;
 -- Do NOT add `component` to a run_id predicate as tuning: a run_id belongs to exactly one
 -- component, so it carries no information the index has not already used.
 -- No index on artifact_results or test_cases -- both scan fully in a few ms.
--- ADD INDEX covers only parts written after it, so deployers must follow this with:
---   ALTER TABLE test_case_runs MATERIALIZE INDEX idx_run_id SETTINGS mutations_sync = 2;
--- mutations_sync=2 waits for completion, without which a benchmark measures a half-built index.
-ALTER TABLE test_case_runs MATERIALIZE INDEX idx_run_id SETTINGS mutations_sync = 2;
--- mutations_sync=2 waits for completion, without which a benchmark measures a half-built index.
+-- ADD INDEX covers only parts written after it, so the MATERIALIZE below must follow it --
+-- reversed, it targets an index that does not exist yet. mutations_sync=2 waits for
+-- completion, without which a benchmark measures a half-built index.
 ALTER TABLE test_case_runs
     ADD INDEX IF NOT EXISTS idx_run_id run_id TYPE bloom_filter(0.01) GRANULARITY 1;
+ALTER TABLE test_case_runs MATERIALIZE INDEX idx_run_id SETTINGS mutations_sync = 2;

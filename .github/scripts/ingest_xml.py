@@ -527,8 +527,8 @@ V2_BENCH_COMPONENT = "torch-spyre"
 
 
 def v2_benchmark_tables_present(client, db: str) -> bool:
-    return _table_exists(client, "benchmarks", db) and _table_exists(
-        client, "benchmark_runs", db
+    return v2_tables_present(
+        client, db, tables=(v2_schema.BENCHMARKS, v2_schema.BENCHMARK_RUNS)
     )
 
 

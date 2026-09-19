@@ -193,7 +193,14 @@ def insert_benchmarks_v2(
                 "props": {},
             },
         )
-        fact["measurements"].update(b.get("measurements") or {})
+        # Extended, not overwritten: two entries sharing (benchmark, backend) and a metric key
+        # are two samples of that metric, and the column exists to keep both.
+        for k, v in (b.get("measurements") or {}).items():
+            fact["measurements"].setdefault(k, []).extend(v)
+        # One scalar for a row whose metrics can carry different sample counts, so it is the
+        # max rather than a sum: it bounds n, and over-reporting a per-metric n is the lesser
+        # error than a total that matches no metric. Per-metric n is recoverable as
+        # length(measurements[k]) whenever the producer sends samples rather than a mean.
         fact["iterations"] = max(fact["iterations"], int(b.get("iterations") or 0))
         # Merged on every entry, as the identity props are: a sparser first entry must not
         # drop a field a later one set for the same (benchmark, backend).

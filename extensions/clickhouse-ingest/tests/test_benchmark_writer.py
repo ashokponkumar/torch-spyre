@@ -92,6 +92,26 @@ def test_every_metric_of_one_benchmark_is_one_row():
     assert measurements == {"avg_latency": [6.1], "p99_latency": [7.0]}
 
 
+def test_repeated_metric_key_keeps_every_sample():
+    # Two entries sharing (benchmark, backend) AND a metric key are two samples of it.
+    # Overwriting kept only the last and froze variance at zero.
+    c = FakeClient()
+    n = insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [
+            _bench(measurements={"kernel_mean_ms": [6.1], "p99_latency": [7.0]}),
+            _bench(measurements={"kernel_mean_ms": [6.4]}),
+        ],
+    )
+    assert n == 1
+    (row,) = _rows(c, BENCHMARK_RUNS)[0]
+    measurements = row[BENCHMARK_RUNS.columns.index("measurements")]
+    assert measurements == {"kernel_mean_ms": [6.1, 6.4], "p99_latency": [7.0]}
+
+
 def test_run_props_merge_across_entries_for_one_fact_row():
     # A sparser earlier entry must not drop a field a later one set for the same key.
     c = FakeClient()
