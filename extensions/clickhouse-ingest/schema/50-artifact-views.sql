@@ -82,8 +82,15 @@ SELECT
     coalesce(c.failed, 0)      AS failed,
     coalesce(c.errors, 0)      AS errors,
     coalesce(c.skipped, 0)     AS skipped,
+    -- Previously omitted, which left them in total_tests but in no bucket: the four buckets
+    -- did not sum to the total (72,887 rows on prod) and pass_rate read 92.11%, not 97.88%.
+    coalesce(c.xfail, 0)       AS xfail,
+    coalesce(c.xpass, 0)       AS xpass,
     r.duration_s     AS duration_s,
-    if(total_tests > 0, passed / total_tests, NULL) AS pass_rate,
+    -- Denominator excludes xfail/xpass: of the cases whose outcome was in question, how many
+    -- passed. total_tests keeps the full count for the other convention.
+    if(total_tests - xfail - xpass > 0,
+       passed / (total_tests - xfail - xpass), NULL) AS pass_rate,
     total_tests > 0 AS suite_ran,
     -- 'running' is advisory only: a crashed run keeps this row until the 90-day TTL. Kept
     -- visible here so the drill-down shows a live run, but aggregating callers must exclude
@@ -94,14 +101,18 @@ LEFT JOIN artifacts AS a ON a.artifact_id = r.artifact_id
 -- LEFT JOIN, not INNER: a run with no case rows must still appear, with total_tests = 0.
 -- That is exactly the "suite never executed" signal, and an INNER JOIN would delete it.
 LEFT JOIN (
+    -- run_case_counters, not test_case_runs: pre-aggregated on insert, so this reads one row
+    -- per run. sum() is still required -- SummingMergeTree collapses on merge, not on read.
     SELECT
         run_id,
-        count()                                 AS total_tests,
-        countIf(status = 'passed')              AS passed,
-        countIf(status = 'failed')              AS failed,
-        countIf(status = 'error')               AS errors,
-        countIf(status = 'skipped')             AS skipped
-    FROM test_case_runs
+        sum(total_tests) AS total_tests,
+        sum(passed)      AS passed,
+        sum(failed)      AS failed,
+        sum(errors)      AS errors,
+        sum(skipped)     AS skipped,
+        sum(xfail)       AS xfail,
+        sum(xpass)       AS xpass
+    FROM run_case_counters
     GROUP BY run_id
 ) AS c ON c.run_id = r.run_id;
 

@@ -62,6 +62,19 @@ inputs:
       the ingest script falls back to its own host-arch default.
     required: false
     default: ''
+  script-repo:
+    description: >
+      Repository holding the canonical ingest script, for the sparse-checkout
+      fallback. Consumers outside torch-spyre must keep this default -- without
+      it the fallback checks out the CALLING repo and finds no script.
+    required: false
+    default: torch-spyre/torch-spyre
+  script-ref:
+    description: >
+      Ref of script-repo to check out. Pin to a tag from another repo; the
+      default tracks that repo's default branch.
+    required: false
+    default: ''
   torch-spyre-dir:
     description: >
       Fallback directory containing .github/scripts/ingest_xml.py when the

@@ -77,3 +77,50 @@ ENGINE = MergeTree()
 -- already prunes, and PARTITION BY component measured slower.
 PARTITION BY toYYYYMM(ts)
 ORDER BY (component, run_id, test_case_id);
+
+
+-- Per-run case counters, maintained on insert. Computing them inline cost a full scan per
+-- call (measured ~213M rows/day on prod to serve 425 runs); 75% of those rows belong to runs
+-- no artifact references, so no predicate prunes them.
+--
+-- Grain is run_id alone, and that is what makes it usable: test_case_runs has no arch,
+-- result_kind or tag, so every dimension a caller segments by is joined ABOVE this table.
+-- SummingMergeTree because a sharded run arrives as many XMLs in separate inserts.
+CREATE TABLE IF NOT EXISTS run_case_counters
+(
+    run_id      UUID,
+    component   LowCardinality(String),
+    total_tests UInt64,
+    passed      UInt64,
+    failed      UInt64,
+    errors      UInt64,
+    skipped     UInt64,
+    -- Split, not folded into failed/passed: an xfail is an expected failure, and
+    -- v_run_tier_counters already reports them this way.
+    xfail       UInt64,
+    xpass       UInt64
+)
+ENGINE = SummingMergeTree()
+ORDER BY (run_id, component);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS run_case_counters_mv TO run_case_counters AS
+SELECT
+    run_id,
+    component,
+    count()                        AS total_tests,
+    countIf(status = 'passed')     AS passed,
+    countIf(status = 'failed')     AS failed,
+    countIf(status = 'error')      AS errors,
+    countIf(status = 'skipped')    AS skipped,
+    countIf(status = 'xfail')      AS xfail,
+    countIf(status = 'xpass')      AS xpass
+FROM test_case_runs
+GROUP BY run_id, component;
+
+-- Backfill once after creating the MV: an MV fires on INSERT only, so without this the table
+-- stays empty and every reader reports zero counters.
+--   INSERT INTO run_case_counters
+--   SELECT run_id, component, count(), countIf(status='passed'), countIf(status='failed'),
+--          countIf(status='error'), countIf(status='skipped'), countIf(status='xfail'),
+--          countIf(status='xpass')
+--   FROM test_case_runs GROUP BY run_id, component;
