@@ -197,9 +197,7 @@ def insert_benchmarks_v2(
         fact["iterations"] = max(fact["iterations"], int(b.get("iterations") or 0))
         # Merged on every entry, as the identity props are: a sparser first entry must not
         # drop a field a later one set for the same (benchmark, backend).
-        fact["props"].update(
-            {k: str(v) for k, v in (b.get("run_props") or {}).items()}
-        )
+        fact["props"].update({k: str(v) for k, v in (b.get("run_props") or {}).items()})
     # The DDL's CHECK refuses an empty map, so one unmeasured benchmark would fail the whole
     # insert; dropped with a warning instead of losing a long perf leg to a parse gap.
     run_rows = [f for f in facts.values() if f["measurements"]]
