@@ -132,7 +132,12 @@ def insert_v2(
 
 
 def v2_benchmarks_already_ingested(
-    client, db: str, run_id: str, component: str, report_kind: str = ""
+    client,
+    db: str,
+    run_id: str,
+    component: str,
+    report_kind: str = "",
+    source_file: str = "",
 ) -> bool:
     """benchmark_runs has no dedup key, so a double ingest doubles the samples behind a
     mean -- which still looks plausible.
@@ -142,6 +147,10 @@ def v2_benchmarks_already_ingested(
     benchmark-report XML from the same leg share it. Keyed on (component, run_id) alone,
     the first file written makes every later kind look already-ingested and its disjoint
     benchmarks are dropped silently. Empty matches rows written before this key existed.
+
+    source_file narrows further, as v2_already_ingested's sibling check does: a sharded
+    run can pass several same-kind XMLs (e.g. two kernel-report shards) under one run_id,
+    and report_kind alone would let the first shard block the rest.
     """
     q = (
         f"SELECT count() FROM {schema.BENCHMARK_RUNS.qualified(db)} "
@@ -151,6 +160,9 @@ def v2_benchmarks_already_ingested(
     if report_kind:
         q += " AND props['report_kind'] = {kind:String}"
         params["kind"] = report_kind
+    if source_file:
+        q += " AND props['source_file'] = {sf:String}"
+        params["sf"] = source_file
     rows = client.query(q, parameters=params).result_rows
     return bool(rows and rows[0][0] > 0)
 
@@ -162,6 +174,7 @@ def insert_benchmarks_v2(
     run_id: str,
     benchmarks: list,
     report_kind: str = "",
+    source_file: str = "",
 ) -> int:
     """Write benchmarks (identity) + benchmark_runs (measurements) for one leg.
 
@@ -170,8 +183,9 @@ def insert_benchmarks_v2(
     per (benchmark, backend): a row per metric would multiply every trend point by the
     metric count.
 
-    report_kind is stamped into each row's props so v2_benchmarks_already_ingested can
-    scope its dedup per source kind -- several files share one run_id in an invocation.
+    report_kind and source_file are stamped into each row's props so
+    v2_benchmarks_already_ingested can scope its dedup per source kind and per file --
+    several files, some sharing a kind, share one run_id in an invocation.
     """
     if not benchmarks:
         return 0
@@ -200,6 +214,12 @@ def insert_benchmarks_v2(
             merged.update(props)
             props = merged
             tag_set |= set(prev["tags"])
+        # First-write-wins, like tags/props merge from a fixed side rather than the last
+        # entry seen: bid is a content hash of (component, name, tags, disc), so every
+        # entry sharing a bid already agrees on name in substance -- this only picks
+        # which literal spelling (case, whitespace) survives, deterministically.
+        if prev:
+            name = prev["name"]
         ident_rows[bid] = {
             "benchmark_id": bid,
             "component": component,
@@ -216,26 +236,33 @@ def insert_benchmarks_v2(
                 "backend": backend,
                 "measurements": {},
                 "iterations": 0,
-                "props": {"report_kind": report_kind} if report_kind else {},
+                "props": {
+                    **({"report_kind": report_kind} if report_kind else {}),
+                    **({"source_file": source_file} if source_file else {}),
+                },
             },
         )
         # Extended, not overwritten: two entries sharing (benchmark, backend) and a
         # metric key are two samples of that metric, and the column exists to keep both.
         for k, v in (b.get("measurements") or {}).items():
             fact["measurements"].setdefault(k, []).extend(v)
-        # One scalar for a row whose metrics can carry different sample counts, so it is
-        # the max rather than a sum: it bounds n, and over-reporting a per-metric n is
-        # the lesser error than a total that matches no metric. Per-metric n is
-        # recoverable as length(measurements[k]) whenever the producer sends samples
-        # rather than a mean.
-        fact["iterations"] = max(fact["iterations"], int(b.get("iterations") or 0))
+        # Summed, not maxed: measurements are extended across entries sharing this fact
+        # key, so each entry's iterations is its own distinct contribution, not a
+        # restatement of the same count. A single scalar still can't reflect per-metric
+        # sample counts that diverge (recoverable as length(measurements[k]) whenever the
+        # producer sends samples rather than a mean) -- this only fixes the multi-entry
+        # undercount, not that ceiling.
+        fact["iterations"] += int(b.get("iterations") or 0)
         # Merged on every entry, as the identity props are: a sparser first entry must
         # not drop a field a later one set for the same (benchmark, backend).
         fact["props"].update({k: str(v) for k, v in (b.get("run_props") or {}).items()})
-        # Re-applied last: report_kind is the dedup scope, so a producer prop of the
-        # same name must not be able to redefine it and let a re-ingest through.
+        # Re-applied last: report_kind/source_file are the dedup scope, so a producer
+        # prop of the same name must not be able to redefine either and let a re-ingest
+        # through.
         if report_kind:
             fact["props"]["report_kind"] = report_kind
+        if source_file:
+            fact["props"]["source_file"] = source_file
     # The DDL's CHECK refuses an empty map, so one unmeasured benchmark would fail the
     # whole insert; dropped with a warning instead of losing a long perf leg to a parse
     # gap.

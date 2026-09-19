@@ -532,14 +532,20 @@ _V2_BENCH_TABLES = (v2_schema.BENCHMARKS, v2_schema.BENCHMARK_RUNS)
 def v2_benchmark_tables_present(client, db: str) -> bool:
     """Both benchmark tables exist in `db` AND carry every column the writer inserts.
 
-    Columns, not just tables: prod once had a `benchmarks` missing `component` (which
-    leads the identity hash) and an existence-only gate passed it, so the gap surfaced as
-    an opaque column-mismatch deep inside the insert. Checking the schema model's own
-    column list turns that into one clear pre-flight failure naming table and columns.
+    Delegates the existence+column diff to the shared v2_tables_present so the
+    functional-test and benchmark write paths get the same drift protection; only the
+    per-table warning naming the missing columns is specific to this call site.
     """
-    if not v2_tables_present(client, db, tables=_V2_BENCH_TABLES):
-        return False
+    if v2_tables_present(client, db, tables=_V2_BENCH_TABLES, check_columns=True):
+        return True
     for t in _V2_BENCH_TABLES:
+        if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):
+            print(
+                f"  [warn] v2 skipped: {db}.{t.name} does not exist "
+                "-- apply the v2 benchmark DDL",
+                file=sys.stderr,
+            )
+            continue
         rows = client.query(
             "SELECT name FROM system.columns "
             "WHERE database = {db:String} AND table = {t:String}",
@@ -552,8 +558,7 @@ def v2_benchmark_tables_present(client, db: str) -> bool:
                 "-- apply the v2 benchmark DDL",
                 file=sys.stderr,
             )
-            return False
-    return True
+    return False
 
 
 # perf_kernels.metric is the real backend axis: cpu_kernel_ms on 16,734 prod rows,
@@ -1413,7 +1418,12 @@ def main():
                         file=sys.stderr,
                     )
                 elif v2_benchmarks_already_ingested(
-                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT, "kernel"
+                    client,
+                    v2db,
+                    _v2_run_id,
+                    V2_BENCH_COMPONENT,
+                    "kernel",
+                    run_meta["source_file"],
                 ):
                     print(
                         f"  v2: already ingested kernel report for "
@@ -1427,6 +1437,7 @@ def main():
                         _v2_run_id,
                         _v2_bench_entries(kernels),
                         report_kind="kernel",
+                        source_file=run_meta["source_file"],
                     )
                     print(f"  v2: {_n} benchmark_runs under run_id={_v2_run_id}")
 
@@ -1490,7 +1501,12 @@ def main():
                         file=sys.stderr,
                     )
                 elif v2_benchmarks_already_ingested(
-                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT, "benchmark"
+                    client,
+                    v2db,
+                    _v2_run_id,
+                    V2_BENCH_COMPONENT,
+                    "benchmark",
+                    run_meta["source_file"],
                 ):
                     print(
                         f"  v2: already ingested benchmark report for "
@@ -1504,6 +1520,7 @@ def main():
                         _v2_run_id,
                         _v2_bench_entries(benchmarks),
                         report_kind="benchmark",
+                        source_file=run_meta["source_file"],
                     )
                     print(f"  v2: {_n} benchmark_runs under run_id={_v2_run_id}")
 

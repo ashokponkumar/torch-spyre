@@ -240,6 +240,66 @@ def test_tags_are_unioned_across_entries_for_one_identity():
     assert tags == ["TIER__PERF", "mode__serve", "tier__perf"], tags
 
 
+def test_name_is_first_write_wins_not_last():
+    # bid already agrees name in substance across entries sharing it; this only picks
+    # which literal spelling survives, deterministically rather than by arrival order.
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [_bench(name="Serve_G33"), _bench(name="serve_g33")],
+    )
+    (row,) = _rows(c, BENCHMARKS)[0]
+    assert row[BENCHMARKS.columns.index("name")] == "Serve_G33"
+
+
+def test_iterations_sum_across_merged_entries():
+    # Two entries sharing a fact key each contribute their own distinct iteration count;
+    # max() under-counts once more than one entry contributes samples.
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [
+            _bench(measurements={"avg_latency": [6.1]}, iterations=2),
+            _bench(measurements={"avg_latency": [6.4]}, iterations=3),
+        ],
+    )
+    (row,) = _rows(c, BENCHMARK_RUNS)[0]
+    assert row[BENCHMARK_RUNS.columns.index("iterations")] == 5
+
+
+def test_already_ingested_scopes_by_source_file():
+    # A sharded run can pass several same-kind XMLs under one run_id; report_kind alone
+    # would let the first shard block the rest.
+    c = FakeClient(run_count=3)
+    assert v2_benchmarks_already_ingested(c, "db", RUN, "c", "kernel", "shard-1.xml")
+    sql, params = c.queries[-1]
+    assert "props['source_file']" in sql
+    assert params["sf"] == "shard-1.xml"
+
+
+def test_source_file_is_stamped_and_not_overridable_by_the_producer():
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [_bench(run_props={"source_file": "spoofed", "host": "node1"})],
+        report_kind="kernel",
+        source_file="shard-1.xml",
+    )
+    (row,) = _rows(c, BENCHMARK_RUNS)[0]
+    props = row[BENCHMARK_RUNS.columns.index("props")]
+    assert props["source_file"] == "shard-1.xml"
+    assert props["host"] == "node1"
+
+
 def test_rows_are_ordered_by_the_schema_model():
     c = FakeClient()
     insert_benchmarks_v2(c, "db", "spyre-inference", RUN, [_bench()])

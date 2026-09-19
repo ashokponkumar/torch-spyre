@@ -194,16 +194,17 @@ SELECT
     avg(e.duration_s)       AS mean_duration_s
 FROM
 (
-    -- Latest resolution per artifact: collapses the rolling/dated pair to one row.
+    -- Latest resolution per (artifact, family): collapses each family's rolling/dated
+    -- pair to one row. Grouping by artifact_id alone would collapse nightly and weekly
+    -- together too, picking whichever family resolved later and silently dropping the
+    -- other family's contribution to its own trend -- a normal case, since one artifact
+    -- commonly carries both tags.
     SELECT artifact_id,
-           -- Aliases deliberately differ from the source column names: an alias equal to a
-           -- source column is resolved inside WHERE and inside the enclosing aggregate,
-           -- failing as ILLEGAL_AGGREGATION.
-           argMax(tag_family, resolved_ts) AS fam,
+           tag_family                      AS fam,
            max(resolved_ts)                AS rts
     FROM v_tag_resolution
     WHERE tag_family IN ('nightly', 'weekly')
-    GROUP BY artifact_id
+    GROUP BY artifact_id, tag_family
 ) AS d
 INNER JOIN v_artifact_results_enriched AS e ON e.artifact_id = d.artifact_id
 -- state='running' is advisory display only and a crashed run leaves a stale row until the

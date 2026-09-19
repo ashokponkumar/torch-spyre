@@ -89,7 +89,9 @@ def v2_database() -> str:
     return os.environ.get("CLICKHOUSE_DB_V2", "").strip()
 
 
-def v2_tables_present(client, db: str, tables=None) -> bool:
+def v2_tables_present(
+    client, db: str, tables=None, check_columns: bool = False
+) -> bool:
     """v2 write path is skipped unless every table it needs exists, so this can be
     deployed before the migration without erroring on every run.
 
@@ -99,8 +101,22 @@ def v2_tables_present(client, db: str, tables=None) -> bool:
     Names come from the schema model, not string literals: this check is mirrored in the
     product repos, and a hardcoded name could drift from the table it checks while still
     looking correct.
+
+    check_columns also diffs each table's live columns against the schema model. Prod
+    once had a `benchmarks` missing `component` (which leads the identity hash) and an
+    existence-only gate passed it, so the gap surfaced as an opaque column-mismatch deep
+    inside the insert -- this turns that into one pre-flight failure naming table and
+    columns, for callers willing to pay the extra round trip per table.
     """
     for t in tables or (schema.TEST_CASES, schema.TEST_CASE_RUNS):
         if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):
             return False
+        if check_columns:
+            rows = client.query(
+                "SELECT name FROM system.columns "
+                "WHERE database = {db:String} AND table = {t:String}",
+                parameters={"db": db, "t": t.name},
+            ).result_rows
+            if set(t.columns) - {r[0] for r in rows}:
+                return False
     return True
