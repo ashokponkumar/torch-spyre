@@ -53,8 +53,8 @@ from dataclasses import dataclass
 from typing import Any
 
 # The DDL's CHECK constraints, re-expressed. They cannot be read from the server at ingest
-# time, so they are duplicated here -- keep in step with schema/functional_tests_v2.sql (status)
-# and schema/artifacts_v2.sql (the rest).
+# time, so they are duplicated here -- keep in step with schema/10-functional-tests.sql
+# (status) and schema/20-artifacts.sql (the rest).
 STATUS_VALUES = frozenset({"passed", "failed", "error", "skipped", "xfail", "xpass"})
 KIND_VALUES = frozenset({"image", "rpm", "wheel", "generic"})
 ORIGIN_VALUES = frozenset({"built", "copied", "promoted", "upstream"})
@@ -157,7 +157,7 @@ class Table:
 
 
 # ── the v2 functional/benchmark tables, columns in DDL order ────────────────────────────
-# Source of truth: schema/functional_tests_v2.sql, alongside this file.
+# Source of truth: schema/10-functional-tests.sql, alongside this file.
 # `ts` is omitted from every one: it is DEFAULT now() and letting the server set it keeps the
 # ingest clock out of the data.
 
@@ -185,7 +185,7 @@ TEST_CASE_RUNS = Table(
     enums=(("status", STATUS_VALUES),),
 )
 
-# Source of truth: schema/benchmarks_v2.sql, alongside this file. `measurements` there is
+# Source of truth: schema/30-benchmarks.sql, alongside this file. `measurements` there is
 # Map(String, Array(Float64)) -- a metric's SAMPLES, not one number. This model does no type
 # coercion, so it accepts either shape and a scalar would be refused by the server, not here.
 BENCHMARKS = Table(
@@ -212,7 +212,7 @@ BENCHMARK_RUNS = Table(
 )
 
 # ── the four v2 ARTIFACT tables, columns in DDL order ───────────────────────────────────
-# Source of truth: schema/artifacts_v2.sql, alongside this file. Modelled here for the same
+# Source of truth: schema/20-artifacts.sql, alongside this file. Modelled here for the same
 # reason as the tables above -- the writer and the readers had no shared statement of a row's
 # shape, and the artifact tables are where that actually cost us.
 #
