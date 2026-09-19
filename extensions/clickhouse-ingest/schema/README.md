@@ -7,7 +7,7 @@ The ClickHouse DDL for the v2 tables this package writes and reads.
 | `functional_tests_v2.sql` | `test_cases`, `test_case_runs` |
 | `benchmarks_v2.sql` | `benchmarks`, `benchmark_runs` |
 | `artifacts_v2.sql` | `artifacts`, `artifact_refs`, `artifact_tags`, `artifact_results` |
-| `vllm_results_v3.sql` | `vllm_results_v3` (upstream-aligned vLLM perf shape) |
+| `vllm_results_v3.sql` | `oss_ci_benchmark_v3`, `oss_ci_benchmark_metadata` + their MVs (upstream-aligned vLLM perf, projected from `benchmark_runs`) |
 | `ci_events_v2.sql` | `jenkins_agents` |
 | `views_v2.sql` | 11 `v_*` views over the functional and artifact tables |
 | `benchmark_views_v2.sql` | 5 `v_benchmark_*` views |
@@ -52,7 +52,9 @@ one.
 On the **prod** server, `spyre_v2` matches these files for every table except one, verified
 column-for-column (including view signatures for the benchmark views):
 
-- `vllm_results_v3` **does not exist in prod** — the file is the intended shape, not a deployed
-  one.
+- The `oss_ci_benchmark_*` pair **does not exist in prod** — the file is the intended shape, not
+  a deployed one. It was verified on the dev server: applying it and inserting one
+  `benchmark_runs` row propagated through both materialized views, and a live HUD read the
+  result with upstream's own queries unmodified.
 - Staging `spyre_v2_next` has `component` but **not** the widened `measurements` or the `samples`
   column, so staging and prod differ on the benchmark pair.
