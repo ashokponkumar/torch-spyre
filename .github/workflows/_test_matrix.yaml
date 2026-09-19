@@ -820,6 +820,10 @@ jobs:
           clickhouse-user: ${{ secrets.CLICKHOUSE_USER }}
           clickhouse-pass: ${{ secrets.CLICKHOUSE_PASS }}
           clickhouse-db: ${{ secrets.CLICKHOUSE_DB }}
+          # Without these two the v2 write is a no-op, so benchmark_runs stays empty and the
+          # benchmark path is unreachable -- the perf job is its only producer.
+          clickhouse-db-v2: ${{ secrets.CLICKHOUSE_DB_V2 }}
+          schema: both
 
       # Four honesty lines. Echo only — never upload report.xml (public
       # artifacts would leak benchmark numbers).

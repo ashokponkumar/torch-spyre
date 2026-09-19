@@ -174,10 +174,16 @@ runs:
           echo "need-checkout=true" >> "$GITHUB_OUTPUT"
         fi
 
+    # `repository` and `path` are both load-bearing for callers outside torch-spyre: without
+    # repository this checks out the CALLING repo and finds no script, and without path it
+    # overwrites the caller's workspace (its XML included).
     - name: Checkout ingest script (fallback)
       if: steps.gate.outputs.configured == 'true' && steps.locate.outputs.need-checkout == 'true'
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
+        repository: ${{ inputs.script-repo }}
+        ref: ${{ inputs.script-ref }}
+        path: .ingest-src
         sparse-checkout: |
           .github/scripts/ingest_xml.py
           extensions/clickhouse-ingest
@@ -186,7 +192,7 @@ runs:
     - name: Set ingest script path (fallback)
       if: steps.gate.outputs.configured == 'true' && steps.locate.outputs.need-checkout == 'true'
       shell: bash
-      run: echo "INGEST_SCRIPT=${GITHUB_WORKSPACE}/.github/scripts/ingest_xml.py" >> "$GITHUB_ENV"
+      run: echo "INGEST_SCRIPT=${GITHUB_WORKSPACE}/.ingest-src/.github/scripts/ingest_xml.py" >> "$GITHUB_ENV"
 
     - name: Install uv
       if: steps.gate.outputs.configured == 'true'
