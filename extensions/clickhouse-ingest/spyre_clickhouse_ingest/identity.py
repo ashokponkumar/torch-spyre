@@ -228,35 +228,19 @@ def v2_run_id_for(args, run_id: str, arch: str, tier: str) -> str:
 
 
 def v2_benchmark_id(component: str, name: str, tags, disc=None, disc_keys=()) -> str:
-    """Content identity of a BENCHMARK, so the same benchmark reconciles across runs.
+    """Content identity of a benchmark, so the same benchmark reconciles across runs.
 
-    component LEADS the string, and that is load-bearing rather than cosmetic: producers carry
-    DIFFERENT discriminator key sets (torch-spyre's kernel perf uses record_type/config_name/
-    input_shapes/run_mode/kernel_name/is_total, the vLLM writer uses run_mode/tensor_parallel/
-    input_len/output_len). Because component comes first, no id from one producer can equal one
-    from another, so each key set only has to be internally consistent. Two producers writing
-    the SAME component would additionally have to agree on disc_keys.
-
-    `disc_keys` is a parameter, not a module constant: the set belongs to the producer, and
-    baking one in would silently re-key the other. It is the KEY ORDER in the hash, so the
-    tuple is positional -- reordering it mints new ids for every benchmark.
-
-    `backend` is deliberately NOT hashed. It is the axis a cross-backend comparison pivots ON
-    (see v_benchmark_backend_compare), so folding it in would make the two sides of one
-    comparison different benchmarks -- v1's mistake.
-
-    `tags` are deduped and SORTED, as in v2_test_case_id: they are a set, so source order is
-    incidental and an unsorted join makes two writers disagree about one benchmark.
+    component leads the hash, which is what lets each producer own its own `disc_keys` set
+    without colliding with another's. `disc_keys` is positional: reordering it mints new ids.
+    `backend` is deliberately not hashed -- it is the axis cross-backend comparison pivots on.
     """
     if not (_v2_norm(component) and _v2_norm(name)):
-        # An empty field still hashes to a real, stable uuid, so every unidentifiable
-        # benchmark would collide on ONE id rather than merely being orphaned. The DDL's
-        # CONSTRAINTs reject component='' / name='' anyway.
+        # An empty field hashes to a real uuid, so every unidentifiable benchmark would
+        # collide on one id rather than merely being orphaned.
         return ""
     tag_part = ",".join(sorted({t for t in (_v2_norm(x) for x in (tags or [])) if t}))
     disc = disc or {}
-    # Every key is emitted even when absent, so a benchmark that gains a discriminator value
-    # keeps a stable string shape and only the value it actually set changes.
+    # Absent keys are still emitted, so gaining a discriminator value changes only that value.
     disc_part = ",".join(f"{k}={_v2_norm(disc.get(k))}" for k in disc_keys)
     return str(
         uuid.uuid5(

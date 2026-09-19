@@ -216,16 +216,14 @@ def test_benchmark_id_golden():
 
 
 def test_benchmark_id_normalises_component():
-    # Every other field passes _v2_norm; a raw component made 'Torch-Spyre' a different
-    # benchmark from 'torch-spyre'.
+    # component is normalised too, else 'Torch-Spyre' is a different benchmark.
     assert v2_benchmark_id("Torch-Spyre", "matmul", [], {}, ()) == v2_benchmark_id(
         "torch-spyre", "matmul", [], {}, ()
     )
 
 
 def test_benchmark_id_refuses_an_incomplete_key():
-    # An empty field still hashes to a real uuid, so every unidentifiable benchmark would
-    # collide on ONE id rather than merely being orphaned.
+    # An empty field hashes to a real uuid, so all such benchmarks would share one id.
     assert v2_benchmark_id("", "n", [], {}, ()) == ""
     assert v2_benchmark_id("c", "", [], {}, ()) == ""
 
@@ -238,8 +236,7 @@ def test_benchmark_id_is_tag_order_independent():
 
 
 def test_backend_is_not_part_of_the_identity():
-    # backend is the axis a cross-backend comparison pivots ON: hashing it would make the two
-    # sides of one comparison different benchmarks.
+    # backend is the axis comparison pivots on; hashing it splits one comparison in two.
     cpu = v2_benchmark_id("c", "n", [], {"backend": "cpu"}, ())
     spyre = v2_benchmark_id("c", "n", [], {"backend": "spyre"}, ())
     assert cpu == spyre
@@ -257,8 +254,8 @@ def test_producers_with_different_disc_keys_cannot_collide():
 
 
 def test_disc_key_order_is_positional():
-    # disc_keys is the KEY ORDER in the hash, so a reorder mints new ids -- pinned so a
-    # well-meaning alphabetisation of a producer's tuple cannot pass silently.
+    # disc_keys is the key order in the hash, so alphabetising a producer's tuple re-keys
+    # every benchmark -- pinned so that cannot pass silently.
     a = v2_benchmark_id("c", "n", [], {"a": "1", "b": "2"}, ("a", "b"))
     b = v2_benchmark_id("c", "n", [], {"a": "1", "b": "2"}, ("b", "a"))
     assert a != b
