@@ -1,14 +1,13 @@
 -- Views over the artifact and tag tables: resolve a tag to what it pointed at, and join an
 -- artifact to the verdicts recorded against it.
---
 -- Apply after 20-artifacts.sql and 10-functional-tests.sql: v_artifact_results_enriched reads
--- test_case_runs, and the later views here select from the earlier ones, so order within the
--- file matters too.
+-- test_case_runs, and later views here select from earlier ones, so order within the file
+-- matters too.
 
 -- Tag -> the artifact it points at NOW, one row per (tag, component, arch).
--- The only correct resolution primitive; `is_rolling` is emergent (a tag is rolling iff
--- it has ever pointed at more than one artifact), never stored, so it cannot contradict
--- the rows it summarises.
+-- The only correct resolution primitive. `is_rolling` is emergent (a tag is rolling iff it
+-- has ever pointed at more than one artifact), never stored, so it cannot contradict the
+-- rows it summarises.
 CREATE VIEW IF NOT EXISTS v_tag_resolution AS
 SELECT
     t.tag                              AS tag,
@@ -26,9 +25,9 @@ GROUP BY tag, component, arch;
 -- The tag picker. One row per tag, so the UI can list channels without resolving each.
 -- arch_list is an array because a dated tag spans all three platforms and the picker
 -- shows that span before a platform is chosen.
--- is_rolling is computed PER (component, arch) slot and then OR-ed, not as
--- uniqExact(artifact_id) over the whole tag: a dated tag legitimately holds one artifact
--- per component, so the tag-wide count marks every bundle tag rolling.
+-- is_rolling is computed per (component, arch) slot and then OR-ed, not as
+-- uniqExact(artifact_id) over the whole tag: a dated tag legitimately holds one artifact per
+-- component, so a tag-wide count marks every bundle tag rolling.
 CREATE VIEW IF NOT EXISTS v_tag_list AS
 SELECT
     t.tag                          AS tag,
@@ -55,11 +54,10 @@ GROUP BY tag;
 -- to the trend and tag views, and the artifact drill-down's own source.
 -- artifact_arch vs run_arch are deliberately separate: a 'multi' manifest is tested on
 -- one platform, so only run_arch answers "which platform did this pass on".
--- The counters are DERIVED from test_case_runs rather than read off artifact_results, which
--- no longer stores them: a stored copy is a second source of truth that drifts the moment a
--- delta run copies a covering run's cases in. Counted over the run's WHOLE row set (executed
--- plus copied), which is the point of the copy -- a delta run reports its whole tier. Use
--- props['ran_in'] = run_id to count only what this run itself executed.
+-- The counters are derived from test_case_runs rather than read off artifact_results, which
+-- no longer stores them: a stored copy drifts the moment a delta run copies a covering run's
+-- cases in. Counted over the run's whole row set (executed plus copied), which is the point
+-- of the copy. Use props['ran_in'] = run_id for only what this run itself executed.
 -- suite_ran distinguishes "the suite never executed" (no case rows at all) from "it ran and
 -- regressed" -- state alone cannot, and a 0/0 row would otherwise chart as 0% pass.
 CREATE VIEW IF NOT EXISTS v_artifact_results_enriched AS
@@ -76,17 +74,20 @@ SELECT
     r.result_kind    AS result_kind,
     r.test_type      AS test_type,
     r.state          AS state,
-    c.total_tests    AS total_tests,
-    c.passed         AS passed,
-    c.failed         AS failed,
-    c.errors         AS errors,
-    c.skipped        AS skipped,
+    -- coalesced because the LEFT JOIN below yields NULL, not 0, for a run with no case rows
+    -- under join_use_nulls=1 -- which would break the `suite_ran = 0` filter callers are told
+    -- to use, and silently, since NULL simply fails the predicate.
+    coalesce(c.total_tests, 0) AS total_tests,
+    coalesce(c.passed, 0)      AS passed,
+    coalesce(c.failed, 0)      AS failed,
+    coalesce(c.errors, 0)      AS errors,
+    coalesce(c.skipped, 0)     AS skipped,
     r.duration_s     AS duration_s,
-    if(c.total_tests > 0, c.passed / c.total_tests, NULL) AS pass_rate,
-    c.total_tests > 0 AS suite_ran,
+    if(total_tests > 0, passed / total_tests, NULL) AS pass_rate,
+    total_tests > 0 AS suite_ran,
     -- 'running' is advisory only: a crashed run keeps this row until the 90-day TTL. Kept
-    -- VISIBLE here (the drill-down should show a live run) but callers that aggregate must
-    -- exclude it, as v_tier_trend and v_run_coverage do.
+    -- visible here so the drill-down shows a live run, but aggregating callers must exclude
+    -- it, as v_tier_trend and v_run_coverage do.
     CAST(r.state = 'running' AS UInt8) AS is_advisory
 FROM artifact_results AS r
 LEFT JOIN artifacts AS a ON a.artifact_id = r.artifact_id
@@ -134,9 +135,8 @@ FROM v_tag_resolution AS tr
 INNER JOIN v_artifact_results_enriched AS e ON e.artifact_id = tr.artifact_id;
 
 -- The membership list behind a tag: which artifacts are in it, with their addresses.
--- Separate from v_tag_results because a tag member with no test run must still be
--- listed -- an inner join to results would hide exactly the untested artifacts the
--- page exists to surface.
+-- Separate from v_tag_results because a tag member with no test run must still be listed --
+-- an inner join to results would hide the untested artifacts the page exists to surface.
 CREATE VIEW IF NOT EXISTS v_tag_artifacts AS
 SELECT
     tr.tag          AS tag,
@@ -157,28 +157,24 @@ LEFT JOIN artifact_refs AS f ON f.artifact_id = tr.artifact_id
 GROUP BY tag, tag_family, component, arch, artifact_id, resolved_ts,
          artifact_name, kind, origin, id12, sources;
 
--- Daily trend for the overview page, split by platform so the three arches chart
--- side by side. Grain is one row per (day, tag_family, result_kind, test_type,
--- run_arch, component); the UI aggregates upward, because summing a day's rows is
--- correct but re-deriving a per-component split from a rolled-up row is not.
--- pass_rate is computed from the summed counters, not averaged over runs: averaging
--- rates weights a 3-test run equally with a 3,000-test one.
--- Excludes state='running': see the WHERE clause.
--- One row per TAG, so a rolling channel and its dated alias (nightly + nightly-2026-09-07,
--- same family, same artifact) each contribute a row: summing `runs` double-counts (measured
--- 1,169 distinct runs -> 1,201). Because both duplicate tags sit in ONE family, grouping by
--- tag_family does NOT fix this -- nightly alone sums to 1,063 against 1,039 distinct. Counts
--- here are exact only within a single `tag`; any exact total is uniqExact(run_id) from
--- v_artifact_results_enriched. Never max() over tag_family: it assumes families describe the
--- same runs and silently drops the disjoint ones. pass_rate is unaffected (both sides scale).
+-- Daily trend for the overview page, split by platform so the three arches chart side by
+-- side. Grain is one row per (day, tag_family, result_kind, test_type, run_arch, component);
+-- the UI aggregates upward, since summing a day's rows is correct but re-deriving a
+-- per-component split from a rolled-up row is not.
+-- pass_rate is computed from the summed counters, not averaged over runs: averaging rates
+-- weights a 3-test run equally with a 3,000-test one.
+-- One row per TAG, so a rolling channel and its dated alias each contribute a row and
+-- summing `runs` double-counts. Grouping by tag_family does NOT fix this, since both
+-- duplicate tags sit in one family. Counts here are exact only within a single `tag`; an
+-- exact total is uniqExact(run_id) from v_artifact_results_enriched. Never max() over
+-- tag_family -- it assumes families describe the same runs and drops the disjoint ones.
 CREATE VIEW IF NOT EXISTS v_tier_trend AS
 -- One row per (day, tag_family, kind, test_type, arch, component).
--- The tag join is deduped to ONE row per artifact first: rolling and dated tags coexist by
+-- The tag join is deduped to one row per artifact first: rolling and dated tags coexist by
 -- design (an artifact carries both `weekly` and `weekly-2026-09-05`), so joining
--- v_tag_resolution directly fans out and counts the same run once per tag. Measured on dev:
--- 1266 resolution rows over 1248 artifacts inflated cases 56638 vs a true 53623.
--- `runs` counts DISTINCT run_id, not result rows -- one run can carry several result rows
--- (15 of 1184 on dev), and a run-count label must not follow the row count.
+-- v_tag_resolution directly fans out and counts the same run once per tag.
+-- `runs` counts distinct run_id, not result rows -- one run can carry several result rows,
+-- and a run-count label must not follow the row count.
 SELECT
     toDate(d.rts)           AS day,
     d.fam                   AS tag_family,
@@ -200,9 +196,9 @@ FROM
 (
     -- Latest resolution per artifact: collapses the rolling/dated pair to one row.
     SELECT artifact_id,
-           -- Aliases deliberately differ from the source column names: an output alias equal
-           -- to a source column makes ClickHouse resolve the alias inside WHERE and inside the
-           -- enclosing aggregate, which fails as ILLEGAL_AGGREGATION.
+           -- Aliases deliberately differ from the source column names: an alias equal to a
+           -- source column is resolved inside WHERE and inside the enclosing aggregate,
+           -- failing as ILLEGAL_AGGREGATION.
            argMax(tag_family, resolved_ts) AS fam,
            max(resolved_ts)                AS rts
     FROM v_tag_resolution
