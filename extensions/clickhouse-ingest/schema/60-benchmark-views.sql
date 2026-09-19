@@ -26,7 +26,12 @@ SELECT
     r.measurements AS samples,
     r.iterations AS iterations,
     r.props AS run_props,
-    ar.artifact_id, ar.arch, ar.test_type, ar.state
+    ar.artifact_id,
+    -- Folded to one spelling, as identity.py's v2_canonical_arch folds it for the hash:
+    -- Jenkins labels a leg 'amd64' where GHA calls it 'x86_64', and an unfolded arch splits
+    -- one platform's trend into two series.
+    if(ar.arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', ar.arch) AS arch,
+    ar.test_type, ar.state
 FROM benchmark_runs AS r
 INNER JOIN benchmarks AS b USING (benchmark_id)
 -- Deduped to one artifact_results row per run before joining: that table is a plain MergeTree

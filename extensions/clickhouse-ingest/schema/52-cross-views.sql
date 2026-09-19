@@ -32,7 +32,7 @@ FROM
     FROM
     (
         -- state='running' excluded: a crashed run's stale row would count as covered.
-        SELECT toDate(ts) AS day, if(arch IN ('amd64', 'x86'), 'x86_64', arch) AS arch,
+        SELECT toDate(ts) AS day, if(arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', arch) AS arch,
                run_id, 1 AS in_results, 0 AS in_cases
         FROM artifact_results
         WHERE state != 'running'

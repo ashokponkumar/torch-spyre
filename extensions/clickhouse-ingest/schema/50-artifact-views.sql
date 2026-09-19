@@ -13,7 +13,7 @@ SELECT
     t.tag                              AS tag,
     any(t.tag_family)                  AS tag_family,
     a.component                        AS component,
-    if(a.arch IN ('amd64', 'x86'), 'x86_64', a.arch) AS arch,
+    if(a.arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', a.arch) AS arch,
     argMax(t.artifact_id, t.ts)        AS artifact_id,
     max(t.ts)                          AS resolved_ts,
     count()                            AS promotion_count,
@@ -37,7 +37,7 @@ SELECT
     count()                        AS promotion_count,
     uniqExact(t.artifact_id)       AS artifact_count,
     uniqExact(t.component)         AS component_count,
-    arraySort(groupUniqArray(if(t.arch IN ('amd64', 'x86'), 'x86_64', t.arch))) AS arch_list,
+    arraySort(groupUniqArray(if(t.arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', t.arch))) AS arch_list,
     max(slot_artifacts) > 1        AS is_rolling
 FROM
 (
@@ -68,8 +68,8 @@ SELECT
     a.component      AS component,
     a.kind           AS kind,
     a.artifact_name  AS artifact_name,
-    if(a.arch IN ('amd64', 'x86'), 'x86_64', a.arch) AS artifact_arch,
-    if(r.arch IN ('amd64', 'x86'), 'x86_64', r.arch) AS run_arch,
+    if(a.arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', a.arch) AS artifact_arch,
+    if(r.arch IN ('amd64', 'x86', 'x86-64'), 'x86_64', r.arch) AS run_arch,
     a.origin         AS origin,
     r.result_kind    AS result_kind,
     r.test_type      AS test_type,

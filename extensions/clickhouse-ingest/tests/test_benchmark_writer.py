@@ -27,11 +27,13 @@ class FakeClient:
         self.known = list(known)
         self.run_count = run_count
         self.inserts = []
+        self.queries = []
 
     def insert(self, table, rows, column_names=None, database=None):
         self.inserts.append((table, rows, column_names, database))
 
     def query(self, sql, parameters=None):
+        self.queries.append((sql, parameters or {}))
         if "count()" in sql:
             rows = [(self.run_count,)]
         else:
@@ -185,6 +187,57 @@ def test_already_ingested_detects_a_prior_run():
     # Without this a re-ingest doubles every number behind a mean, which looks plausible.
     assert v2_benchmarks_already_ingested(FakeClient(run_count=3), "db", RUN, "c")
     assert not v2_benchmarks_already_ingested(FakeClient(run_count=0), "db", RUN, "c")
+
+
+def test_already_ingested_scopes_by_report_kind():
+    # One invocation ingests a kernel report and a benchmark report under ONE run_id, so a
+    # (component, run_id)-only key makes the second file look already-ingested and drops it.
+    c = FakeClient(run_count=3)
+    assert v2_benchmarks_already_ingested(c, "db", RUN, "c", "benchmark")
+    sql, params = c.queries[-1]
+    assert "props['report_kind']" in sql
+    assert params["kind"] == "benchmark"
+    # Omitted, the scope stays as it was, so rows predating the key still match.
+    c2 = FakeClient(run_count=3)
+    assert v2_benchmarks_already_ingested(c2, "db", RUN, "c")
+    assert "report_kind" not in c2.queries[-1][0]
+
+
+def test_report_kind_is_stamped_and_not_overridable_by_the_producer():
+    # The dedup above reads this prop, so a producer prop of the same name must not win.
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [_bench(run_props={"report_kind": "spoofed", "host": "node1"})],
+        report_kind="kernel",
+    )
+    (row,) = _rows(c, BENCHMARK_RUNS)[0]
+    props = row[BENCHMARK_RUNS.columns.index("props")]
+    assert props["report_kind"] == "kernel"
+    assert props["host"] == "node1"
+
+
+def test_tags_are_unioned_across_entries_for_one_identity():
+    # The id hashes tags NORMALIZED and SORTED, so the same members in different case or
+    # order are one bid. Replacing the list wholesale kept only whichever entry ran last.
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [
+            _bench(tags=["mode__serve", "tier__perf"]),
+            _bench(tags=["TIER__PERF", "mode__serve"]),
+        ],
+    )
+    (row,) = _rows(c, BENCHMARKS)[0]
+    tags = row[BENCHMARKS.columns.index("tags")]
+    # Every raw spelling seen for this identity survives; none is silently dropped.
+    assert tags == ["TIER__PERF", "mode__serve", "tier__perf"], tags
 
 
 def test_rows_are_ordered_by_the_schema_model():

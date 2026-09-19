@@ -14,8 +14,8 @@
 
 """ClickHouse connection and v2 database/table presence.
 
-The v2 database is a NAME, not a second connection: one instance holds both generations, so a
-single client serves both provided every v2 statement is qualified.
+The v2 database is a NAME, not a second connection: one instance holds both generations,
+so a single client serves both provided every v2 statement is qualified.
 """
 
 import os
@@ -79,21 +79,22 @@ def client_summary() -> str:
 def v2_database() -> str:
     """The v2 database name, or "" when v2 is not configured.
 
-    A NAME rather than a second connection: the same instance holds both generations, so one
-    client serves both provided every v2 statement is QUALIFIED. Qualifying is not optional --
-    `benchmark_runs` exists in both with incompatible shapes (v1 has run_id UInt64 +
-    source_file, v2 has run_id UUID and no source_file), so an unqualified name resolves
-    against whichever database the connection holds and silently hits the wrong table.
+    A NAME rather than a second connection: the same instance holds both generations, so
+    one client serves both provided every v2 statement is QUALIFIED. Qualifying is not
+    optional -- `benchmark_runs` exists in both with incompatible shapes (v1 has run_id
+    UInt64 + source_file, v2 has run_id UUID and no source_file), so an unqualified name
+    resolves against whichever database the connection holds and silently hits the wrong
+    table.
     """
     return os.environ.get("CLICKHOUSE_DB_V2", "").strip()
 
 
 def v2_tables_present(client, db: str, tables=None) -> bool:
-    """v2 write path is skipped unless every table it needs exists, so this script can be
+    """v2 write path is skipped unless every table it needs exists, so this can be
     deployed before the migration without erroring on every run.
 
-    `tables` defaults to the functional pair the JUnit ingests need; a benchmark writer must
-    pass its own, since the two write paths land in separate migrations.
+    `tables` defaults to the functional pair the JUnit ingests need; a benchmark writer
+    must pass its own, since the two write paths land in separate migrations.
 
     Names come from the schema model, not string literals: this check is mirrored in the
     product repos, and a hardcoded name could drift from the table it checks while still

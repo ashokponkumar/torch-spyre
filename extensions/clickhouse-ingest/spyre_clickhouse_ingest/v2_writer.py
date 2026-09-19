@@ -14,8 +14,8 @@
 
 """The schema-v2 write path: dedup guard plus the test_cases/test_case_runs insert.
 
-Rows are built as dicts and ordered by the schema model, so a field cannot be assigned to the
-wrong column and the column order lives in exactly one place.
+Rows are built as dicts and ordered by the schema model, so a field cannot be assigned
+to the wrong column and the column order lives in exactly one place.
 """
 
 import sys
@@ -65,8 +65,8 @@ def insert_v2(
 ) -> int:
     """Write test_cases (identity) + test_case_runs (outcome) for one leg.
 
-    Rows are built as dicts and ordered by v2_schema, so a field cannot be assigned to the
-    wrong column and the column order lives in exactly one place.
+    Rows are built as dicts and ordered by v2_schema, so a field cannot be assigned to
+    the wrong column and the column order lives in exactly one place.
 
     Dropped from v2 deliberately: filename, suite_name, runner_run_id, and every stored
     counter -- all derivable, and a stored counter invites drift.
@@ -104,11 +104,12 @@ def insert_v2(
                 # source_file names the xml this row came from, so a sharded run dedups
                 # per file instead of the first shard blocking the rest.
                 # ran_in names the run that ACTUALLY EXECUTED this case. For a case this
-                # run ran it is this run_id; a reuse copy carries the original executor's
-                # (see copy_reused_cases). Every "how much did we execute" query must
-                # filter props['ran_in'] = run_id -- without it, reuse copies inflate the
-                # count. Queries asking "what does this run report for the tier" want the
-                # unfiltered total, which is the point of writing the copies at all.
+                # run ran it is this run_id; a reuse copy carries the original
+                # executor's (see copy_reused_cases). Every "how much did we execute"
+                # query must filter props['ran_in'] = run_id -- without it, reuse copies
+                # inflate the count. Queries asking "what does this run report for the
+                # tier" want the unfiltered total, which is the point of writing the
+                # copies at all.
                 "props": (
                     {
                         "ran_in": run_id,
@@ -117,41 +118,60 @@ def insert_v2(
                 ),
             }
         )
-    # Cross-run dedup, not just in-leg: test_cases is a plain MergeTree, so re-inserting a
-    # known identity appends a duplicate instead of collapsing it.
+    # Cross-run dedup, not just in-leg: test_cases is a plain MergeTree, so re-inserting
+    # a known identity appends a duplicate instead of collapsing it.
     schema.insert_identities(client, schema.TEST_CASES, ident_rows, db=db)
     schema.insert(client, schema.TEST_CASE_RUNS, run_rows, db=db)
     if skipped_unidentifiable:
         print(
-            f"  [warn] v2: {skipped_unidentifiable} case(s) skipped -- identity not derivable",
+            f"  [warn] v2: {skipped_unidentifiable} case(s) skipped -- identity "
+            "not derivable",
             file=sys.stderr,
         )
     return len(run_rows)
 
 
 def v2_benchmarks_already_ingested(
-    client, db: str, run_id: str, component: str
+    client, db: str, run_id: str, component: str, report_kind: str = ""
 ) -> bool:
-    """benchmark_runs is a plain MergeTree with no dedup key, so a double ingest doubles the
-    samples behind a mean -- which still looks plausible. Scoped to (component, run_id), not
-    to a source file: one perf leg reports all its benchmarks in a single ingest.
+    """benchmark_runs has no dedup key, so a double ingest doubles the samples behind a
+    mean -- which still looks plausible.
+
+    report_kind is part of the scope because one invocation ingests SEVERAL files under one
+    run_id: v2_run_id_for honours a threaded --run-id verbatim, so a kernel-report and a
+    benchmark-report XML from the same leg share it. Keyed on (component, run_id) alone,
+    the first file written makes every later kind look already-ingested and its disjoint
+    benchmarks are dropped silently. Empty matches rows written before this key existed.
     """
-    rows = client.query(
+    q = (
         f"SELECT count() FROM {schema.BENCHMARK_RUNS.qualified(db)} "
-        "WHERE component = {component:String} AND run_id = {run_id:UUID}",
-        parameters={"component": component, "run_id": run_id},
-    ).result_rows
+        "WHERE component = {component:String} AND run_id = {run_id:UUID}"
+    )
+    params = {"component": component, "run_id": run_id}
+    if report_kind:
+        q += " AND props['report_kind'] = {kind:String}"
+        params["kind"] = report_kind
+    rows = client.query(q, parameters=params).result_rows
     return bool(rows and rows[0][0] > 0)
 
 
 def insert_benchmarks_v2(
-    client, db: str, component: str, run_id: str, benchmarks: list
+    client,
+    db: str,
+    component: str,
+    run_id: str,
+    benchmarks: list,
+    report_kind: str = "",
 ) -> int:
     """Write benchmarks (identity) + benchmark_runs (measurements) for one leg.
 
-    Each entry is a dict: name, tags, props, backend, measurements, iterations, and `disc`
-    plus `disc_keys` for the identity discriminators (see v2_benchmark_id). One row per
-    (benchmark, backend): a row per metric would multiply every trend point by the metric count.
+    Each entry is a dict: name, tags, props, backend, measurements, iterations, and
+    `disc` plus `disc_keys` for the identity discriminators (see v2_benchmark_id). One row
+    per (benchmark, backend): a row per metric would multiply every trend point by the
+    metric count.
+
+    report_kind is stamped into each row's props so v2_benchmarks_already_ingested can
+    scope its dedup per source kind -- several files share one run_id in an invocation.
     """
     if not benchmarks:
         return 0
@@ -162,23 +182,29 @@ def insert_benchmarks_v2(
         disc = b.get("disc") or {}
         bid = v2_benchmark_id(component, name, tags, disc, b.get("disc_keys") or ())
         if not bid:
-            # Writing a refused identity would collide it with every other unidentifiable one.
+            # Writing a refused identity would collide it with every other
+            # unidentifiable one.
             skipped_unidentifiable += 1
             continue
         backend = b.get("backend", "")
-        # Keyed by id: two files reporting one benchmark merge, richer props winning, so the
-        # merge cannot drop a field the other side set.
+        # Keyed by id: two files reporting one benchmark merge, richer props winning, so
+        # the merge cannot drop a field the other side set.
         prev = ident_rows.get(bid)
         props = {k: str(v) for k, v in (b.get("props") or {}).items() if v != ""}
+        # Union, for the same reason props merge: the id hashes NORMALIZED tags, so two
+        # entries differing only in case or order share a bid, and taking the last
+        # entry's list wholesale would drop tags the other side carried.
+        tag_set = {t for t in tags if t}
         if prev:
             merged = dict(prev["props"])
             merged.update(props)
             props = merged
+            tag_set |= set(prev["tags"])
         ident_rows[bid] = {
             "benchmark_id": bid,
             "component": component,
             "name": name,
-            "tags": sorted({t for t in tags if t}),
+            "tags": sorted(tag_set),
             "props": props,
         }
         fact = facts.setdefault(
@@ -190,23 +216,29 @@ def insert_benchmarks_v2(
                 "backend": backend,
                 "measurements": {},
                 "iterations": 0,
-                "props": {},
+                "props": {"report_kind": report_kind} if report_kind else {},
             },
         )
-        # Extended, not overwritten: two entries sharing (benchmark, backend) and a metric key
-        # are two samples of that metric, and the column exists to keep both.
+        # Extended, not overwritten: two entries sharing (benchmark, backend) and a
+        # metric key are two samples of that metric, and the column exists to keep both.
         for k, v in (b.get("measurements") or {}).items():
             fact["measurements"].setdefault(k, []).extend(v)
-        # One scalar for a row whose metrics can carry different sample counts, so it is the
-        # max rather than a sum: it bounds n, and over-reporting a per-metric n is the lesser
-        # error than a total that matches no metric. Per-metric n is recoverable as
-        # length(measurements[k]) whenever the producer sends samples rather than a mean.
+        # One scalar for a row whose metrics can carry different sample counts, so it is
+        # the max rather than a sum: it bounds n, and over-reporting a per-metric n is
+        # the lesser error than a total that matches no metric. Per-metric n is
+        # recoverable as length(measurements[k]) whenever the producer sends samples
+        # rather than a mean.
         fact["iterations"] = max(fact["iterations"], int(b.get("iterations") or 0))
-        # Merged on every entry, as the identity props are: a sparser first entry must not
-        # drop a field a later one set for the same (benchmark, backend).
+        # Merged on every entry, as the identity props are: a sparser first entry must
+        # not drop a field a later one set for the same (benchmark, backend).
         fact["props"].update({k: str(v) for k, v in (b.get("run_props") or {}).items()})
-    # The DDL's CHECK refuses an empty map, so one unmeasured benchmark would fail the whole
-    # insert; dropped with a warning instead of losing a long perf leg to a parse gap.
+        # Re-applied last: report_kind is the dedup scope, so a producer prop of the
+        # same name must not be able to redefine it and let a re-ingest through.
+        if report_kind:
+            fact["props"]["report_kind"] = report_kind
+    # The DDL's CHECK refuses an empty map, so one unmeasured benchmark would fail the
+    # whole insert; dropped with a warning instead of losing a long perf leg to a parse
+    # gap.
     run_rows = [f for f in facts.values() if f["measurements"]]
     dropped = len(facts) - len(run_rows)
     kept = {f["benchmark_id"] for f in run_rows}
@@ -219,8 +251,8 @@ def insert_benchmarks_v2(
     schema.insert(client, schema.BENCHMARK_RUNS, run_rows, db=db)
     if skipped_unidentifiable:
         print(
-            f"  [warn] v2: {skipped_unidentifiable} benchmark(s) skipped -- identity not "
-            "derivable",
+            f"  [warn] v2: {skipped_unidentifiable} benchmark(s) skipped -- identity "
+            "not derivable",
             file=sys.stderr,
         )
     if dropped:

@@ -526,10 +526,34 @@ _V2_BENCH_ID_KEYS = (
 V2_BENCH_COMPONENT = "torch-spyre"
 
 
+_V2_BENCH_TABLES = (v2_schema.BENCHMARKS, v2_schema.BENCHMARK_RUNS)
+
+
 def v2_benchmark_tables_present(client, db: str) -> bool:
-    return v2_tables_present(
-        client, db, tables=(v2_schema.BENCHMARKS, v2_schema.BENCHMARK_RUNS)
-    )
+    """Both benchmark tables exist in `db` AND carry every column the writer inserts.
+
+    Columns, not just tables: prod once had a `benchmarks` missing `component` (which
+    leads the identity hash) and an existence-only gate passed it, so the gap surfaced as
+    an opaque column-mismatch deep inside the insert. Checking the schema model's own
+    column list turns that into one clear pre-flight failure naming table and columns.
+    """
+    if not v2_tables_present(client, db, tables=_V2_BENCH_TABLES):
+        return False
+    for t in _V2_BENCH_TABLES:
+        rows = client.query(
+            "SELECT name FROM system.columns "
+            "WHERE database = {db:String} AND table = {t:String}",
+            parameters={"db": db, "t": t.name},
+        ).result_rows
+        missing = sorted(set(t.columns) - {r[0] for r in rows})
+        if missing:
+            print(
+                f"  [warn] v2 skipped: {db}.{t.name} is missing {', '.join(missing)} "
+                "-- apply the v2 benchmark DDL",
+                file=sys.stderr,
+            )
+            return False
+    return True
 
 
 # perf_kernels.metric is the real backend axis: cpu_kernel_ms on 16,734 prod rows,
@@ -1316,6 +1340,9 @@ def main():
     parsed_benchmarks = 0
     total_kernels = 0
 
+    # Hoisted: the gate costs round trips and v2db is fixed for the invocation.
+    v2_bench_ready = bool(v2db) and v2_benchmark_tables_present(client, v2db)
+
     for xml_path in xml_files:
         print(f"Processing: {xml_path.name}")
 
@@ -1374,7 +1401,7 @@ def main():
             # Additive v2 write: the same measurements under a DERIVED run_id, so a
             # perf number can name the artifact it measured. Guarded on both tables
             # existing so this deploys before the migration.
-            if v2db and v2_benchmark_tables_present(client, v2db):
+            if v2_bench_ready:
                 _src, _ext = v2_source_and_external_run_id(args, str(run_id))
                 _v2_run_id = v2_run_id_for(
                     args, str(run_id), args.platform or "", "perf"
@@ -1386,9 +1413,12 @@ def main():
                         file=sys.stderr,
                     )
                 elif v2_benchmarks_already_ingested(
-                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT
+                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT, "kernel"
                 ):
-                    print(f"  v2: already ingested run_id={_v2_run_id} — skipping")
+                    print(
+                        f"  v2: already ingested kernel report for "
+                        f"run_id={_v2_run_id} — skipping"
+                    )
                 else:
                     _n = insert_benchmarks_v2(
                         client,
@@ -1396,6 +1426,7 @@ def main():
                         V2_BENCH_COMPONENT,
                         _v2_run_id,
                         _v2_bench_entries(kernels),
+                        report_kind="kernel",
                     )
                     print(f"  v2: {_n} benchmark_runs under run_id={_v2_run_id}")
 
@@ -1447,7 +1478,7 @@ def main():
             # Additive v2 write: the same measurements under a DERIVED run_id, so a
             # perf number can name the artifact it measured. Guarded on both tables
             # existing so this deploys before the migration.
-            if v2db and v2_benchmark_tables_present(client, v2db):
+            if v2_bench_ready:
                 _src, _ext = v2_source_and_external_run_id(args, str(run_id))
                 _v2_run_id = v2_run_id_for(
                     args, str(run_id), args.platform or "", "perf"
@@ -1459,9 +1490,12 @@ def main():
                         file=sys.stderr,
                     )
                 elif v2_benchmarks_already_ingested(
-                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT
+                    client, v2db, _v2_run_id, V2_BENCH_COMPONENT, "benchmark"
                 ):
-                    print(f"  v2: already ingested run_id={_v2_run_id} — skipping")
+                    print(
+                        f"  v2: already ingested benchmark report for "
+                        f"run_id={_v2_run_id} — skipping"
+                    )
                 else:
                     _n = insert_benchmarks_v2(
                         client,
@@ -1469,6 +1503,7 @@ def main():
                         V2_BENCH_COMPONENT,
                         _v2_run_id,
                         _v2_bench_entries(benchmarks),
+                        report_kind="benchmark",
                     )
                     print(f"  v2: {_n} benchmark_runs under run_id={_v2_run_id}")
 
