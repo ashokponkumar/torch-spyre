@@ -92,9 +92,26 @@ def test_every_metric_of_one_benchmark_is_one_row():
     assert measurements == {"avg_latency": [6.1], "p99_latency": [7.0]}
 
 
+def test_run_props_merge_across_entries_for_one_fact_row():
+    # A sparser earlier entry must not drop a field a later one set for the same key.
+    c = FakeClient()
+    insert_benchmarks_v2(
+        c,
+        "db",
+        "spyre-inference",
+        RUN,
+        [
+            _bench(measurements={"avg_latency": [6.1]}, run_props={}),
+            _bench(measurements={"p99_latency": [7.0]}, run_props={"host": "node1"}),
+        ],
+    )
+    (row,) = _rows(c, BENCHMARK_RUNS)[0]
+    assert row[BENCHMARK_RUNS.columns.index("props")] == {"host": "node1"}
+
+
 def test_two_backends_are_two_rows_not_one():
-    # backend is not in the identity, so both sides of a comparison share a benchmark_id --
-    # but they are distinct measurements and must not collapse.
+    # backend is not in the identity, so both sides share a benchmark_id but are still
+    # distinct measurements.
     c = FakeClient()
     n = insert_benchmarks_v2(
         c,
@@ -109,16 +126,14 @@ def test_two_backends_are_two_rows_not_one():
 
 
 def test_a_benchmark_with_no_measurements_is_dropped_not_inserted():
-    # The DDL's CHECK length(measurements) > 0 REJECTS the row, which would fail the whole
-    # insert and kill a 720-minute perf leg over one parse gap.
+    # The DDL's CHECK length(measurements) > 0 rejects the row, failing the whole insert.
     c = FakeClient()
     assert insert_benchmarks_v2(c, "db", "c", RUN, [_bench(measurements={})]) == 0
     assert _rows(c, BENCHMARK_RUNS) == [] or _rows(c, BENCHMARK_RUNS)[0] == []
 
 
 def test_a_dropped_benchmark_does_not_leave_an_orphan_identity_row():
-    # An identity row for a benchmark with no fact row is a dimension entry nothing
-    # references -- it makes the dimension lie about what was measured.
+    # An identity row with no fact row makes the dimension lie about what was measured.
     c = FakeClient()
     insert_benchmarks_v2(
         c, "db", "c", RUN, [_bench(name="kept"), _bench(name="empty", measurements={})]
@@ -135,8 +150,8 @@ def test_an_unidentifiable_benchmark_is_skipped_not_collided():
 
 
 def test_a_known_identity_is_not_reinserted():
-    # benchmarks is a plain MergeTree: re-inserting appends a duplicate, and the collision is
-    # ACROSS runs, so in-run dedup is not enough.
+    # benchmarks is a plain MergeTree and the collision is across runs, so in-run dedup is
+    # not enough.
     first = FakeClient()
     insert_benchmarks_v2(first, "db", "spyre-inference", RUN, [_bench()])
     bid = _rows(first, BENCHMARKS)[0][0][0]
