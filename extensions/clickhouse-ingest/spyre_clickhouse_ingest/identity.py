@@ -236,7 +236,7 @@ def run_id_for(args, run_id: str, arch: str, tier: str) -> str:
 
 
 def capability_id_for(
-    component: str, kind: str, subject: str, name: str, disc=None, disc_keys=()
+    component: str, test_type: str, subject: str, name: str, disc=None, disc_keys=()
 ) -> str:
     """Content identity of one (subject, capability) pair, so the same pair reconciles across
     runs and across the two producers.
@@ -245,9 +245,9 @@ def capability_id_for(
     variant_ids for 51,356 rows -- so it identified nothing and no two runs of one operation
     ever reconciled. This is the same fix case_id_for applied to v1's uuid4 per row.
 
-    `kind` is IN the hash, not just a column: model_ops' `aten::conv2d` and a hypothetical
+    `test_type` is IN the hash, not just a column: model_ops' `aten::conv2d` and a hypothetical
     model_support adapter of the same name are different questions about the same subject, and
-    an id that ignored kind would merge them.
+    an id that ignored it would merge them.
 
     `disc_keys` is positional and per-producer, exactly as benchmark_id_for: model_ops
     discriminates on input shapes/dtypes (2,788 (operation, test) pairs expand to 3,707 once
@@ -256,7 +256,7 @@ def capability_id_for(
     `backend` is deliberately NOT hashed -- the same capability measured on cpu and on spyre is
     ONE capability with two verdicts, and it is the axis a support comparison pivots on.
     """
-    if not (_norm(component) and _norm(kind) and _norm(name)):
+    if not (_norm(component) and _norm(test_type) and _norm(name)):
         # An empty field still hashes to a real uuid that every unidentifiable row would
         # share, which is worse than being orphaned. subject is NOT required: a capability
         # can be asked of the component as a whole rather than of one model.
@@ -270,7 +270,7 @@ def capability_id_for(
             ID_SEP.join(
                 (
                     _norm(component),
-                    _norm(kind),
+                    _norm(test_type),
                     _norm(subject),
                     _norm(name),
                     disc_part,

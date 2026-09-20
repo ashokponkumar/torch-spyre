@@ -21,6 +21,13 @@
 --
 -- FORWARD-ONLY. No backfill: v1 rows cannot produce a run_id (the hash inputs were never
 -- recorded), and v1 model_ops last wrote 2026-09-10 while spyre_v2.artifacts began 2026-09-16.
+--
+-- No branch/commit_sha, here or on hw_failure_diagnostics: they describe the ARTIFACT analysed,
+-- reached through run_id -> artifact_results -> artifacts, so a per-row copy is duplication that
+-- can disagree. NOTE the writer gap -- artifacts does not record them yet: of 4,092 rows, 0 carry
+-- a branch or commit_sha prop, and props['ref'] holds an RPM NEVRA glob whose 12-hex is id12, not
+-- a commit. The artifact writer owes those two props; until then the git coordinates of a
+-- capability run are not recoverable from the warehouse.
 
 
 -- WHAT can be supported: the stable identity of one (subject, capability) pair.
@@ -28,15 +35,20 @@ CREATE TABLE IF NOT EXISTS capabilities
 (
     ts            DateTime DEFAULT now(),
 
-    -- uuid5 over (component, kind, subject, name, disc) -- DERIVED, never minted, so two
+    -- uuid5 over (component, test_type, subject, name, disc) -- DERIVED, never minted, so two
     -- writers reach the same id for the same pair with nothing threaded between them. v1's
     -- variant_id was a per-row surrogate instead: 51,356 distinct ids for 51,356 rows, so it
     -- identified nothing and no two runs of one operation ever reconciled.
     capability_id UUID,
 
     component     LowCardinality(String),
-    -- Which analysis this is. The axis v1 put in the table name.
-    kind          LowCardinality(String),
+    -- Which analysis this is: model_ops | model_support. The axis v1 put in the table name.
+    -- Named test_type because that is what it is -- artifact_results carries test_type
+    -- 'capability' for the whole family (one tier alongside regression/perf), and these are the
+    -- analyses within it. Constrained by convention, not CHECK: a new analysis must be able to
+    -- start writing before this file is edited, exactly as artifact_results' own tier ladder
+    -- deliberately is not an Enum.
+    test_type     LowCardinality(String),
 
     -- The thing analysed (a model), and the capability asked of it (a torch operation for
     -- model_ops, an adapter for model_support). v1 spelled `subject` three ways --
@@ -53,11 +65,11 @@ CREATE TABLE IF NOT EXISTS capabilities
     props         Map(LowCardinality(String), String),
 
     CONSTRAINT chk_component CHECK component != '',
-    CONSTRAINT chk_kind      CHECK kind != '',
+    CONSTRAINT chk_test_type CHECK test_type != '',
     CONSTRAINT chk_name      CHECK name != ''
 )
 ENGINE = MergeTree()
-ORDER BY (component, kind, subject, capability_id);
+ORDER BY (component, test_type, subject, capability_id);
 
 
 -- WHETHER it was supported, per run: one row per (capability, run, backend).
@@ -76,6 +88,9 @@ CREATE TABLE IF NOT EXISTS capability_runs
     -- Denormalized only because it leads the sort key and is a capability_id hash input, so it
     -- cannot disagree. Same call as test_case_runs.component.
     component     LowCardinality(String),
+    -- Which analysis, denormalized from capabilities: it scopes the dedup check, and a reader
+    -- asking "model_ops coverage for this run" would otherwise need the identity join to filter.
+    test_type     LowCardinality(String),
     -- Replaces the _p / _z table suffixes. Canonical spelling (amd64 folds to x86_64).
     arch          LowCardinality(String),
 

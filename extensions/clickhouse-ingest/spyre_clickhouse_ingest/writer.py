@@ -301,13 +301,13 @@ def insert_benchmarks(
 
 
 def capabilities_already_ingested(
-    client, db: str, run_id: str, component: str, kind: str = ""
+    client, db: str, run_id: str, component: str, test_type: str = ""
 ) -> bool:
     """capability_runs has no dedup key, so a double ingest doubles every verdict behind a
     coverage percentage -- which still looks plausible.
 
-    Scoped by kind as well as run: one run can analyse several kinds (model_ops and
-    model_support are separate scans), and keyed on (component, run_id) alone the first kind
+    Scoped by test_type as well as run: one run can carry several analyses (model_ops and
+    model_support are separate scans), and keyed on (component, run_id) alone the first one
     written makes every later one look already-ingested and its rows are dropped silently.
     The same failure benchmark report_kind exists to prevent.
     """
@@ -316,9 +316,9 @@ def capabilities_already_ingested(
         "WHERE component = {component:String} AND run_id = {run_id:UUID}"
     )
     params = {"component": component, "run_id": run_id}
-    if kind:
-        q += " AND props['kind'] = {kind:String}"
-        params["kind"] = kind
+    if test_type:
+        q += " AND test_type = {tt:String}"
+        params["tt"] = test_type
     rows = client.query(q, parameters=params).result_rows
     return bool(rows and rows[0][0] > 0)
 
@@ -328,7 +328,7 @@ def insert_capabilities(
     db: str,
     component: str,
     run_id: str,
-    kind: str,
+    test_type: str,
     results: list,
     arch: str = "",
     disc_keys=(),
@@ -350,7 +350,7 @@ def insert_capabilities(
     for r in results:
         subject, name = r.get("subject", ""), r.get("name", "")
         disc = r.get("disc") or {}
-        cid = capability_id_for(component, kind, subject, name, disc, disc_keys)
+        cid = capability_id_for(component, test_type, subject, name, disc, disc_keys)
         if not cid:
             # Refused identity: writing it anyway collides this row with every other
             # unidentifiable one rather than merely orphaning it.
@@ -362,7 +362,7 @@ def insert_capabilities(
         ident_rows[cid] = {
             "capability_id": cid,
             "component": component,
-            "kind": kind,
+            "test_type": test_type,
             "subject": subject,
             "name": name,
             "tags": tags,
@@ -373,13 +373,12 @@ def insert_capabilities(
                 "run_id": run_id,
                 "capability_id": cid,
                 "component": component,
+                "test_type": test_type,
                 "arch": canonical_arch(arch),
                 "status": r.get("status", ""),
                 "backend": _norm(r.get("backend")),
                 "fail_reason": _norm(r.get("fail_reason")),
-                # kind scopes the dedup check; props carries it because it is not in the
-                # sort key and a second kind under one run must not look already-ingested.
-                "props": {"kind": kind, **(r.get("props") or {})},
+                "props": dict(r.get("props") or {}),
             }
         )
     # Cross-run dedup: capabilities is a plain MergeTree, so re-inserting a known identity

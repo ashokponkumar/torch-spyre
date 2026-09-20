@@ -62,8 +62,12 @@ METHOD_VALUES = frozenset({"container-pull", "dnf", "pip", "download"})
 REF_KIND_VALUES = frozenset({"pullspec", "glob", "url"})
 RESULT_KIND_VALUES = frozenset({"functional", "performance", "image"})
 TEST_TYPE_VALUES = frozenset(
-    {"smoke", "unit", "integration", "regression", "trunk", "perf"}
+    {"smoke", "unit", "integration", "regression", "trunk", "perf", "capability"}
 )
+# capability_runs.test_type: which capability analysis produced the row. A sibling vocabulary to
+# TEST_TYPE_VALUES, not a subset of it -- artifact_results calls the whole family 'capability'
+# (one tier alongside regression/perf), and these name the analyses within it.
+CAPABILITY_TYPE_VALUES = frozenset({"model_ops", "model_support"})
 STATE_VALUES = frozenset({"passed", "failed", "error", "running"})
 # capability_runs.status. NOT the test_case_runs vocabulary: a capability that is
 # not_implemented is an unsupported capability, not a skipped test, and a CPU fallback is a
@@ -227,8 +231,16 @@ BENCHMARK_RUNS = Table(
 # identities, so a flat table repeated the subject and the input signature on every row.
 CAPABILITIES = Table(
     name="capabilities",
-    columns=("capability_id", "component", "kind", "subject", "name", "tags", "props"),
-    required=("component", "kind", "name"),
+    columns=(
+        "capability_id",
+        "component",
+        "test_type",
+        "subject",
+        "name",
+        "tags",
+        "props",
+    ),
+    required=("component", "test_type", "name"),
     identity="capability_id",
 )
 
@@ -238,13 +250,14 @@ CAPABILITY_RUNS = Table(
         "run_id",
         "capability_id",
         "component",
+        "test_type",
         "arch",
         "status",
         "backend",
         "fail_reason",
         "props",
     ),
-    required=("component",),
+    required=("component", "test_type"),
     enums=(("status", CAPABILITY_STATUS_VALUES),),
 )
 
