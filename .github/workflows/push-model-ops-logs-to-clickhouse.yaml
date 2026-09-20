@@ -40,6 +40,14 @@ jobs:
       CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
       CLICKHOUSE_PASS: ${{ secrets.CLICKHOUSE_PASS }}
       CLICKHOUSE_DB: ${{ secrets.CLICKHOUSE_DB }}
+      # Unset => the v2 write is a no-op, so this can deploy before the migration lands.
+      CLICKHOUSE_DB_V2: ${{ secrets.CLICKHOUSE_DB_V2 }}
+      INGEST_SCHEMA: both
+
+      INGEST_COMPONENT: torch-spyre
+      # The arch of the ANALYSED leg, not of this ingest job. See the note in
+      # push-hw-diagnostics-to-clickhouse.yaml: arch is a run_id hash input.
+      LEG_ARCH: x86_64
 
       TRIGGERING_RUN_ID: ${{ github.event.workflow_run.id        || inputs.gha_run_id }}
       TRIGGERING_WORKFLOW: ${{ github.event.workflow_run.name      || 'model-ops-tests' }}
@@ -243,12 +251,19 @@ jobs:
         if: env.HAS_VARIANT_DATA == 'true'
         run: |
           source .venv/bin/activate
+          # --trigger-type is the RUN's test_type (a run_id hash input), not the capability
+          # analysis name -- the writer passes 'model_ops' for that itself.
           python3 .github/scripts/ingest_model_ops.py \
-            --json-file "${JSON_FILE}" \
-            --workflow  "${TRIGGERING_WORKFLOW}" \
-            --branch    "${TRIGGERING_BRANCH}" \
-            --sha       "${TRIGGERING_SHA}" \
-            --run-id    "${TRIGGERING_RUN_ID}"
+            --json-file    "${JSON_FILE}" \
+            --workflow     "${TRIGGERING_WORKFLOW}" \
+            --branch       "${TRIGGERING_BRANCH}" \
+            --sha          "${TRIGGERING_SHA}" \
+            --run-id       "${TRIGGERING_RUN_ID}" \
+            --schema       "${INGEST_SCHEMA}" \
+            --component    "${INGEST_COMPONENT}" \
+            --arch         "${LEG_ARCH}" \
+            --gha-run-id   "${TRIGGERING_RUN_ID}" \
+            --trigger-type capability
 
       # -----------------------------------------------------------------
       # Upload both artefacts so you can inspect them without re-running.
