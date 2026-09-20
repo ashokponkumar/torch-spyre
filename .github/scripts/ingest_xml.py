@@ -32,21 +32,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-# Aliased to `v2_schema` so the call sites below read unchanged.
-from spyre_clickhouse_ingest import schema as v2_schema
+# Aliased to `schema_model` so the call sites below read unchanged.
+from spyre_clickhouse_ingest import schema as schema_model
 from spyre_clickhouse_ingest import (
     extract_properties,
     get_client,
-    insert_benchmarks_v2,
-    insert_v2,
+    insert_benchmarks,
     promote_xpass,
-    v2_already_ingested,
-    v2_benchmarks_already_ingested,
-    v2_component,
-    v2_database,
-    v2_run_id_for,
-    v2_source_and_external_run_id,
-    v2_tables_present,
+    cases_already_ingested,
+    benchmarks_already_ingested,
+    component_of,
+    target_database,
+    run_id_for,
+    source_and_external_run_id,
+    tables_present,
 )
 from spyre_clickhouse_ingest.junit import _runner_run_id, _threaded_run_id
 import regex as re
@@ -516,24 +515,24 @@ _V2_BENCH_ID_KEYS = (
 
 # Segregates this producer's benchmarks from every other one: in the identity hash and
 # leading both perf sort keys, exactly as component is for test_cases/test_case_runs.
-# Defined here rather than beside V2_COMPONENT_DEFAULT so it precedes its first use -- a later
+# Defined here rather than beside COMPONENT_DEFAULT so it precedes its first use -- a later
 # definition raises only at call time, which no import-level check would catch.
-V2_BENCH_COMPONENT = "torch-spyre"
+BENCH_COMPONENT = "torch-spyre"
 
 
-_V2_BENCH_TABLES = (v2_schema.BENCHMARKS, v2_schema.BENCHMARK_RUNS)
+_BENCH_TABLES = (schema_model.BENCHMARKS, schema_model.BENCHMARK_RUNS)
 
 
-def v2_benchmark_tables_present(client, db: str) -> bool:
+def benchmark_tables_present(client, db: str) -> bool:
     """Both benchmark tables exist in `db` AND carry every column the writer inserts.
 
-    Delegates the existence+column diff to the shared v2_tables_present so the
+    Delegates the existence+column diff to the shared tables_present so the
     functional-test and benchmark write paths get the same drift protection; only the
     per-table warning naming the missing columns is specific to this call site.
     """
-    if v2_tables_present(client, db, tables=_V2_BENCH_TABLES):
+    if tables_present(client, db, tables=_BENCH_TABLES):
         return True
-    for t in _V2_BENCH_TABLES:
+    for t in _BENCH_TABLES:
         if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):
             print(
                 f"  [warn] v2 skipped: {db}.{t.name} does not exist "
@@ -559,26 +558,26 @@ def v2_benchmark_tables_present(client, db: str) -> bool:
 # perf_kernels.metric is the real backend axis: cpu_kernel_ms on 16,734 prod rows,
 # spyre_kernel_ms on 3,475. Its torch_spyre_ms/sendnn_ms/ratio columns are NULL on all
 # 20,209 rows, so the comparison v1 looks like it stores was never actually written.
-_V2_BACKEND_BY_METRIC = {
+_BACKEND_BY_METRIC = {
     "cpu_kernel_ms": "cpu",
     "spyre_kernel_ms": "spyre",
     "sendnn_ms": "sendnn",
 }
 
 
-def _v2_bench_backend(rec: dict) -> str:
+def _bench_backend(rec: dict) -> str:
     """Which implementation produced these numbers, so the same benchmark measured on
     two backends compares by self-join instead of by a stored ratio that can disagree
     with its operands."""
     metric = (rec.get("metric") or "").strip()
-    if metric in _V2_BACKEND_BY_METRIC:
-        return _V2_BACKEND_BY_METRIC[metric]
+    if metric in _BACKEND_BY_METRIC:
+        return _BACKEND_BY_METRIC[metric]
     if rec.get("sendnn_ms") is not None and rec.get("torch_spyre_ms") is None:
         return "sendnn"
     return "torch-spyre"
 
 
-def _v2_bench_entries(records: list) -> list:
+def _bench_entries(records: list) -> list:
     """This producer's perf records in the shared writer's entry shape.
 
     Measurements become single-element ARRAYS: benchmark_runs stores a metric's samples, and
@@ -596,7 +595,7 @@ def _v2_bench_entries(records: list) -> list:
             {
                 "name": rec.get("operation_name") or "",
                 "tags": sorted({t for t in (rec.get("tags") or []) if t}),
-                "backend": _v2_bench_backend(rec),
+                "backend": _bench_backend(rec),
                 "props": {
                     k: str(rec[k])
                     for k in _V2_BENCH_PROP_KEYS
@@ -1104,7 +1103,7 @@ def insert_properties(client, run_id: str, cases: list[dict]):
 # and the docstring's own rule (group trends on (component, classname, name)) then splits one
 # suite across two components. --component lets the caller name the component whose suite this
 # actually is; product-test already knows it (config.yaml's `PRODUCT`).
-V2_COMPONENT_DEFAULT = "torch-spyre"
+COMPONENT_DEFAULT = "torch-spyre"
 
 
 def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> int:
@@ -1127,11 +1126,11 @@ def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> 
     if not covered:
         return 0
     total = 0
-    runs = v2_schema.TEST_CASE_RUNS.qualified(db)
+    runs = schema_model.TEST_CASE_RUNS.qualified(db)
     for tier, src_run in covered:
         if not src_run:
             continue
-        # Guard on the SOURCE run, not the tier: v2_already_ingested keys on
+        # Guard on the SOURCE run, not the tier: cases_already_ingested keys on
         # props['source_file'], which these copies inherit from the source row, so it cannot
         # see a re-copy -- without a guard here a second call doubled 4 rows to 8.
         #
@@ -1156,7 +1155,7 @@ def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> 
             continue
         # Only the cases carrying this tier's tag: the covering run may have executed a
         # wider set, and importing all of it would credit this tier with foreign cases.
-        cases = v2_schema.TEST_CASES.qualified(db)
+        cases = schema_model.TEST_CASES.qualified(db)
         client.command(
             f"INSERT INTO {runs} "
             "(run_id, test_case_id, component, status, duration_s, fail_message, props) "
@@ -1263,9 +1262,9 @@ def main():
     )
     client = get_client()
     # One client, both generations: v2 is reached by QUALIFYING every statement with this
-    # database name (see v2_database). "" means v2 is not configured, which every v2 site
+    # database name (see target_database). "" means v2 is not configured, which every v2 site
     # treats as "skip".
-    v2db = v2_database() if args.write_v2 else ""
+    v2db = target_database() if args.write_v2 else ""
     if args.write_v2 and not v2db:
         print(
             "  WARN --schema asked for v2 but CLICKHOUSE_DB_V2 is unset — v2 rows skipped",
@@ -1288,7 +1287,7 @@ def main():
     total_kernels = 0
 
     # Hoisted: the gate costs round trips and v2db is fixed for the invocation.
-    v2_bench_ready = bool(v2db) and v2_benchmark_tables_present(client, v2db)
+    bench_ready = bool(v2db) and benchmark_tables_present(client, v2db)
 
     for xml_path in xml_files:
         print(f"Processing: {xml_path.name}")
@@ -1326,7 +1325,7 @@ def main():
                 continue
 
             # v1-table read, so it only applies when v1 is being written. The v2 path has its
-            # own dedup (v2_benchmarks_already_ingested) against its own table.
+            # own dedup (benchmarks_already_ingested) against its own table.
             if args.write_v1:
                 existing = client.query(
                     "SELECT count() FROM benchmark_runs WHERE source_file = {sf:String}",
@@ -1348,22 +1347,20 @@ def main():
             # Additive v2 write: the same measurements under a DERIVED run_id, so a
             # perf number can name the artifact it measured. Guarded on both tables
             # existing so this deploys before the migration.
-            if v2_bench_ready:
-                _src, _ext = v2_source_and_external_run_id(args, str(run_id))
-                _v2_run_id = v2_run_id_for(
-                    args, str(run_id), args.platform or "", "perf"
-                )
+            if bench_ready:
+                _src, _ext = source_and_external_run_id(args, str(run_id))
+                _v2_run_id = run_id_for(args, str(run_id), args.platform or "", "perf")
                 if not _v2_run_id:
                     print(
                         "  [warn] v2 skipped: run_id not derivable "
                         f"(source={_src!r} external_run_id={_ext!r})",
                         file=sys.stderr,
                     )
-                elif v2_benchmarks_already_ingested(
+                elif benchmarks_already_ingested(
                     client,
                     v2db,
                     _v2_run_id,
-                    V2_BENCH_COMPONENT,
+                    BENCH_COMPONENT,
                     "kernel",
                     run_meta["source_file"],
                 ):
@@ -1372,12 +1369,12 @@ def main():
                         f"run_id={_v2_run_id} — skipping"
                     )
                 else:
-                    _n = insert_benchmarks_v2(
+                    _n = insert_benchmarks(
                         client,
                         v2db,
-                        V2_BENCH_COMPONENT,
+                        BENCH_COMPONENT,
                         _v2_run_id,
-                        _v2_bench_entries(kernels),
+                        _bench_entries(kernels),
                         report_kind="kernel",
                         source_file=run_meta["source_file"],
                     )
@@ -1431,22 +1428,20 @@ def main():
             # Additive v2 write: the same measurements under a DERIVED run_id, so a
             # perf number can name the artifact it measured. Guarded on both tables
             # existing so this deploys before the migration.
-            if v2_bench_ready:
-                _src, _ext = v2_source_and_external_run_id(args, str(run_id))
-                _v2_run_id = v2_run_id_for(
-                    args, str(run_id), args.platform or "", "perf"
-                )
+            if bench_ready:
+                _src, _ext = source_and_external_run_id(args, str(run_id))
+                _v2_run_id = run_id_for(args, str(run_id), args.platform or "", "perf")
                 if not _v2_run_id:
                     print(
                         "  [warn] v2 skipped: run_id not derivable "
                         f"(source={_src!r} external_run_id={_ext!r})",
                         file=sys.stderr,
                     )
-                elif v2_benchmarks_already_ingested(
+                elif benchmarks_already_ingested(
                     client,
                     v2db,
                     _v2_run_id,
-                    V2_BENCH_COMPONENT,
+                    BENCH_COMPONENT,
                     "benchmark",
                     run_meta["source_file"],
                 ):
@@ -1455,12 +1450,12 @@ def main():
                         f"run_id={_v2_run_id} — skipping"
                     )
                 else:
-                    _n = insert_benchmarks_v2(
+                    _n = insert_benchmarks(
                         client,
                         v2db,
-                        V2_BENCH_COMPONENT,
+                        BENCH_COMPONENT,
                         _v2_run_id,
-                        _v2_bench_entries(benchmarks),
+                        _bench_entries(benchmarks),
                         report_kind="benchmark",
                         source_file=run_meta["source_file"],
                     )
@@ -1488,7 +1483,7 @@ def main():
             # but two distinct runs must never collapse. runner_run_id mirrors run_id for a Jenkins/standalone leg, so it's only an independent signal for a GHA numeric id.
             runner_run_id = _runner_run_id(args, run_id)
             # v1-table reads, so gated on v1 being written. v2 dedups on its own table via
-            # v2_already_ingested(run_id, component).
+            # cases_already_ingested(run_id, component).
             if args.write_v1:
                 existing = client.query(
                     "SELECT count() FROM test_runs "
@@ -1535,10 +1530,10 @@ def main():
             # authoritative, so the experimental write is contained rather than allowed to
             # abort the loop and drop every remaining file's v1 insert.
             try:
-                if v2db and v2_tables_present(client, v2db):
-                    _v2_source, _v2_ext = v2_source_and_external_run_id(args, run_id)
+                if v2db and tables_present(client, v2db):
+                    _v2_source, _v2_ext = source_and_external_run_id(args, run_id)
                     _v2_tier = (getattr(args, "trigger_type", "") or "").strip()
-                    _v2_run_id = v2_run_id_for(
+                    _v2_run_id = run_id_for(
                         args, run_id, args.platform or run["platform"], _v2_tier
                     )
                     if not _v2_run_id:
@@ -1551,19 +1546,19 @@ def main():
                             f"--trigger-type is the field usually missing",
                             file=sys.stderr,
                         )
-                    elif v2_already_ingested(
+                    elif cases_already_ingested(
                         client,
                         v2db,
                         _v2_run_id,
-                        v2_component(args, V2_COMPONENT_DEFAULT),
+                        component_of(args, COMPONENT_DEFAULT),
                         xml_path.name,
                     ):
                         print(f"  v2: already ingested run_id={_v2_run_id} — skipping")
                     else:
-                        _n = insert_v2(
+                        _n = insert_cases(
                             client,
                             v2db,
-                            v2_component(args, V2_COMPONENT_DEFAULT),
+                            component_of(args, COMPONENT_DEFAULT),
                             _v2_run_id,
                             cases,
                             xml_path.name,

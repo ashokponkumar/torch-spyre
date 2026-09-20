@@ -81,7 +81,7 @@ def client_summary() -> str:
     )
 
 
-def v2_database() -> str:
+def target_database() -> str:
     """The v2 database name, or "" when v2 is not configured.
 
     A NAME rather than a second connection: the same instance holds both generations, so
@@ -94,7 +94,7 @@ def v2_database() -> str:
     return os.environ.get("CLICKHOUSE_DB_V2", "").strip()
 
 
-def v2_tables_present(client, db: str, tables=None, check_columns: bool = True) -> bool:
+def tables_present(client, db: str, tables=None, check_columns: bool = True) -> bool:
     """v2 write path is skipped unless every table it needs exists, so this can be
     deployed before the migration without erroring on every run.
 

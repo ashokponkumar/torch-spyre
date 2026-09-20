@@ -22,7 +22,7 @@ diff runs BY DEFAULT, since a caller who must opt in is a caller who will forget
 
 import pytest
 from spyre_clickhouse_ingest import schema
-from spyre_clickhouse_ingest.client import v2_tables_present
+from spyre_clickhouse_ingest.client import tables_present
 
 FUNCTIONAL = (schema.TEST_CASES, schema.TEST_CASE_RUNS)
 
@@ -55,13 +55,13 @@ def _full(tables):
 
 def test_absent_table_fails_the_gate():
     client = FakeClient(present=["test_cases"], columns=_full(FUNCTIONAL))
-    assert v2_tables_present(client, "db", tables=FUNCTIONAL) is False
+    assert tables_present(client, "db", tables=FUNCTIONAL) is False
 
 
 def test_complete_tables_pass():
     names = [t.name for t in FUNCTIONAL]
     client = FakeClient(present=names, columns=_full(FUNCTIONAL))
-    assert v2_tables_present(client, "db", tables=FUNCTIONAL) is True
+    assert tables_present(client, "db", tables=FUNCTIONAL) is True
 
 
 def test_column_diff_runs_by_default():
@@ -71,7 +71,7 @@ def test_column_diff_runs_by_default():
     cols["test_cases"].remove("component")
     client = FakeClient(present=names, columns=cols)
     # No check_columns= passed: the default must still catch it.
-    assert v2_tables_present(client, "db", tables=FUNCTIONAL) is False
+    assert tables_present(client, "db", tables=FUNCTIONAL) is False
     assert client.column_queries > 0
 
 
@@ -81,9 +81,7 @@ def test_column_diff_can_be_declined():
     cols = _full(FUNCTIONAL)
     cols["test_cases"].remove("component")
     client = FakeClient(present=names, columns=cols)
-    assert (
-        v2_tables_present(client, "db", tables=FUNCTIONAL, check_columns=False) is True
-    )
+    assert tables_present(client, "db", tables=FUNCTIONAL, check_columns=False) is True
     assert client.column_queries == 0
 
 
@@ -93,7 +91,7 @@ def test_extra_live_columns_are_not_a_failure():
     cols = _full(FUNCTIONAL)
     cols["test_case_runs"].append("some_future_column")
     client = FakeClient(present=names, columns=cols)
-    assert v2_tables_present(client, "db", tables=FUNCTIONAL) is True
+    assert tables_present(client, "db", tables=FUNCTIONAL) is True
 
 
 @pytest.mark.parametrize("missing", ["benchmarks", "benchmark_runs"])
@@ -102,10 +100,10 @@ def test_benchmark_pair_is_gated_the_same_way(missing):
     cols = _full(pair)
     cols[missing].remove("component")
     client = FakeClient(present=[t.name for t in pair], columns=cols)
-    assert v2_tables_present(client, "db", tables=pair) is False
+    assert tables_present(client, "db", tables=pair) is False
 
 
 def test_default_tables_are_the_functional_pair():
     """A caller that passes no `tables` gets the JUnit pair, not the benchmark one."""
     client = FakeClient(present=[t.name for t in FUNCTIONAL], columns=_full(FUNCTIONAL))
-    assert v2_tables_present(client, "db") is True
+    assert tables_present(client, "db") is True

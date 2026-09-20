@@ -5,12 +5,12 @@ into ClickHouse (hw_failure_diagnostics table).
 
 Usage (called by the GHA workflow):
     python3 ingest_hw_diagnostics.py \
-        --json-file hw_diagnostics_tests_74526099734.json \
-        --workflow  "tests" \
-        --branch    "main" \
-        --sha       "abc123..." \
-        --run-id    "74526099734" \
-        --run-link  "https://github.com/org/repo/actions/runs/74526099734"
+        --json-file    hw_diagnostics_tests_74526099734.json \
+        --component    torch-spyre \
+        --arch         x86_64 \
+        --trigger-type regression \
+        --gha-run-id   74526099734 \
+        --run-url      "https://github.com/org/repo/actions/runs/74526099734"
 
 The parse/ingest logic lives in spyre_clickhouse_ingest (extensions/clickhouse-ingest) so the
 product repos share one definition; this file is the CLI around it.
@@ -33,15 +33,11 @@ from spyre_clickhouse_ingest.hw_diagnostics import (
     load_records,
 )
 from spyre_clickhouse_ingest.identity import (
-    v2_canonical_arch,
-    v2_component,
-    v2_run_id_for,
+    canonical_arch,
+    component_of,
+    run_id_for,
 )
-from spyre_clickhouse_ingest.hw_schema import (
-    DEFAULT_TABLE,
-    already_ingested,
-    ensure_extra_columns,
-)
+from spyre_clickhouse_ingest.hw_schema import DEFAULT_TABLE, already_ingested
 
 
 def main() -> None:
@@ -56,27 +52,17 @@ def main() -> None:
         help="Path to JSON file produced by parse_hw_failures.py",
     )
     parser.add_argument(
-        "--workflow", default="", help="Originating GHA workflow name (e.g. 'tests')"
-    )
-    parser.add_argument("--branch", default="", help="Git branch name (e.g. 'main')")
-    parser.add_argument("--sha", default="", help="Git commit SHA")
-    parser.add_argument(
-        "--run-id",
-        default="",
-        help="GHA run ID — used as run_id if JSON records lack one",
-    )
-    parser.add_argument(
-        "--run-link",
-        default="",
-        help="URL to the triggering GHA run (e.g. '<server>/<repo>/actions/runs/<id>')",
-    )
-    parser.add_argument(
         "--table",
         default=DEFAULT_TABLE,
         help=f"Target ClickHouse table (default: {DEFAULT_TABLE})",
     )
-    # v2 join columns. --run-id doubles as the THREADED uuid when the orchestrator minted one;
-    # these supply the coordinate hash inputs for the case where it did not.
+    # run_id is DERIVED, never passed as a coordinate: --run-id carries the threaded uuid when
+    # the orchestrator minted one, and the flags below supply the hash inputs when it did not.
+    parser.add_argument(
+        "--run-id",
+        default="",
+        help="Threaded run uuid from the orchestrator, when one was minted",
+    )
     parser.add_argument(
         "--component",
         default="",
@@ -98,12 +84,18 @@ def main() -> None:
     parser.add_argument(
         "--trigger-type",
         default="",
-        help="Test tier of this leg; a test_type hash input for the v2 run id",
+        help="Test tier of this leg (regression | trunk | perf | ...). Replaces --workflow, "
+        "which carried the same value: it is the test_type run_id is hashed from.",
+    )
+    parser.add_argument(
+        "--run-url",
+        default="",
+        help="URL of the CI run behind these rows; kept in props, not a column",
     )
     parser.add_argument(
         "--artifact-id",
         default="",
-        help="v2 artifact_id of the image this leg ran, read from its OCI label / in-image file",
+        help="artifact_id of the image this leg ran, read from its OCI label / in-image file",
     )
     args = parser.parse_args()
 
@@ -132,32 +124,29 @@ def main() -> None:
     client.command("SELECT 1")
     print("[info] Connected.\n")
 
-    ensure_extra_columns(client, table=args.table)
+    # One JSON file is one run, so the first record's coordinate represents the batch. It is a
+    # hash INPUT, not the run_id: --gha-run-id is the flag form of the same value.
+    external_run_id = _str(records[0].get("run_id") or args.gha_run_id)
+    arch = canonical_arch(args.arch)
+    component = component_of(args)
+    # Same two-case rule as every other writer: the threaded uuid when one was supplied, else
+    # the hash of this leg's own CI coordinate.
+    run_id = run_id_for(args, external_run_id, arch, args.trigger_type) or NIL_UUID
 
-    # One JSON file is one run, so the first record's run_id represents the batch.
-    run_id = _str(records[0].get("run_id") or args.run_id)
-    workflow = _str(args.workflow)
-
-    if already_ingested(client, run_id, workflow, table=args.table):
+    if already_ingested(client, run_id, component, table=args.table):
         print(
-            f"[info] run_id={run_id!r} workflow={workflow!r} already ingested "
+            f"[info] run_id={run_id} component={component!r} already ingested "
             f"— skipping. Re-run with a different table or clear the existing rows."
         )
         sys.exit(0)
 
-    arch = v2_canonical_arch(args.arch)
     ctx = RunContext(
-        run_id=args.run_id,
-        workflow=args.workflow,
-        branch=args.branch,
-        sha=args.sha,
-        run_link=args.run_link,
-        # Same two-case rule as every other writer: the threaded uuid when one was supplied,
-        # else the hash of this leg's own CI coordinate.
-        v2_run_id=v2_run_id_for(args, run_id, arch, args.trigger_type) or NIL_UUID,
-        component=v2_component(args),
+        run_id=run_id,
+        artifact_id=_str(args.artifact_id) or NIL_UUID,
+        component=component,
         arch=arch,
-        v2_artifact_id=_str(args.artifact_id) or NIL_UUID,
+        external_run_id=external_run_id,
+        run_url=args.run_url,
     )
 
     rows = []
@@ -191,12 +180,10 @@ def main() -> None:
     outcomes: Counter = Counter(_str(r.get("outcome"), "unknown") for r in records)
 
     print(f"\n[info] Successfully inserted {len(rows)} row(s) into {args.table}")
-    print(f"[info]   run_id   : {run_id}")
-    print(f"[info]   workflow : {workflow}")
-    print(f"[info]   branch   : {args.branch}")
-    print(f"[info]   sha      : {args.sha[:12]}")
-    print(f"[info]   v2_run_id: {ctx.v2_run_id}")
-    print(f"[info]   component: {ctx.component}  arch: {ctx.arch}")
+    print(f"[info]   run_id     : {ctx.run_id}")
+    print(f"[info]   external   : {ctx.external_run_id} (tier {args.trigger_type!r})")
+    print(f"[info]   component  : {ctx.component}  arch: {ctx.arch}")
+    print(f"[info]   artifact_id: {ctx.artifact_id}")
     print()
     print("[info] Outcomes:")
     for outcome, n in sorted(outcomes.items()):

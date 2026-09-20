@@ -30,7 +30,7 @@ ingest), so there is no sys.path beyond the script's own directory and what `--w
 This module was originally COPIED per repo for that reason; it is now installed as this package
 via `--with`, so the copies and their drift check are gone. Per-repo variation is one constant,
 COMPONENT, which is why a class hierarchy would have been the wrong shape -- and why
-`v2_component` takes the default as a PARAMETER rather than reading it from here.
+`component_of` takes the default as a PARAMETER rather than reading it from here.
 
 WHY NOT THE DRIVER'S OWN SCHEMA SUPPORT. clickhouse-connect has none to use. Its `ColumnDef`
 is what DESCRIBE TABLE returns -- it reads a live table's schema, it cannot declare one or check
@@ -44,7 +44,7 @@ the `uv run --no-project` runtime above rules out. Revisit if that constraint ev
 WHAT IT DELIBERATELY DOES NOT DO. No runtime type coercion (duration_s typed Float32 accepts
 a str), no ClickHouse type mapping, and no identity computation -- run_id and test_case_id
 arrive already computed by the uuid5 helpers, which are untouched by design: changing them
-re-keys the warehouse and silently breaks v2_already_ingested dedup, producing duplicate rows
+re-keys the warehouse and silently breaks cases_already_ingested dedup, producing duplicate rows
 rather than an error.
 """
 

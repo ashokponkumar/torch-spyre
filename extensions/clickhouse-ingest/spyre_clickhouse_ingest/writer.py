@@ -22,16 +22,16 @@ import sys
 
 from . import schema
 from .identity import (
-    _v2_norm,
-    v2_benchmark_id,
-    v2_canonical_arch,
-    v2_capability_id,
-    v2_tags_for_case,
-    v2_test_case_id,
+    _norm,
+    benchmark_id_for,
+    canonical_arch,
+    capability_id_for,
+    tags_for_case,
+    case_id_for,
 )
 
 
-def v2_already_ingested(
+def cases_already_ingested(
     client, db: str, run_id: str, component: str, source_file: str = ""
 ) -> bool:
     """Has THIS source file's rows for this run already landed?
@@ -67,12 +67,12 @@ def v2_already_ingested(
     return bool(rows and rows[0][0] > 0)
 
 
-def insert_v2(
+def insert_test_results(
     client, db: str, component: str, run_id: str, cases: list, source_file: str = ""
 ) -> int:
     """Write test_cases (identity) + test_case_runs (outcome) for one leg.
 
-    Rows are built as dicts and ordered by v2_schema, so a field cannot be assigned to
+    Rows are built as dicts and ordered by schema_model, so a field cannot be assigned to
     the wrong column and the column order lives in exactly one place.
 
     Dropped from v2 deliberately: filename, suite_name, runner_run_id, and every stored
@@ -84,9 +84,9 @@ def insert_v2(
 
     skipped_unidentifiable = 0
     for c in cases:
-        tags = v2_tags_for_case(c)
+        tags = tags_for_case(c)
         classname, name = c.get("classname", ""), c.get("name", "")
-        tcid = v2_test_case_id(component, classname, name, tags)
+        tcid = case_id_for(component, classname, name, tags)
         if not tcid:
             # Refused identity: writing the row anyway would collide it with every
             # other unidentifiable case rather than merely orphaning it.
@@ -138,7 +138,7 @@ def insert_v2(
     return len(run_rows)
 
 
-def v2_benchmarks_already_ingested(
+def benchmarks_already_ingested(
     client,
     db: str,
     run_id: str,
@@ -150,12 +150,12 @@ def v2_benchmarks_already_ingested(
     mean -- which still looks plausible.
 
     report_kind is part of the scope because one invocation ingests SEVERAL files under one
-    run_id: v2_run_id_for honours a threaded --run-id verbatim, so a kernel-report and a
+    run_id: run_id_for honours a threaded --run-id verbatim, so a kernel-report and a
     benchmark-report XML from the same leg share it. Keyed on (component, run_id) alone,
     the first file written makes every later kind look already-ingested and its disjoint
     benchmarks are dropped silently. Empty matches rows written before this key existed.
 
-    source_file narrows further, as v2_already_ingested's sibling check does: a sharded
+    source_file narrows further, as cases_already_ingested's sibling check does: a sharded
     run can pass several same-kind XMLs (e.g. two kernel-report shards) under one run_id,
     and report_kind alone would let the first shard block the rest.
     """
@@ -174,7 +174,7 @@ def v2_benchmarks_already_ingested(
     return bool(rows and rows[0][0] > 0)
 
 
-def insert_benchmarks_v2(
+def insert_benchmarks(
     client,
     db: str,
     component: str,
@@ -186,12 +186,12 @@ def insert_benchmarks_v2(
     """Write benchmarks (identity) + benchmark_runs (measurements) for one leg.
 
     Each entry is a dict: name, tags, props, backend, measurements, iterations, and
-    `disc` plus `disc_keys` for the identity discriminators (see v2_benchmark_id). One row
+    `disc` plus `disc_keys` for the identity discriminators (see benchmark_id_for). One row
     per (benchmark, backend): a row per metric would multiply every trend point by the
     metric count.
 
     report_kind and source_file are stamped into each row's props so
-    v2_benchmarks_already_ingested can scope its dedup per source kind and per file --
+    benchmarks_already_ingested can scope its dedup per source kind and per file --
     several files, some sharing a kind, share one run_id in an invocation.
     """
     if not benchmarks:
@@ -201,7 +201,7 @@ def insert_benchmarks_v2(
     for b in benchmarks:
         name, tags = b.get("name", ""), b.get("tags") or []
         disc = b.get("disc") or {}
-        bid = v2_benchmark_id(component, name, tags, disc, b.get("disc_keys") or ())
+        bid = benchmark_id_for(component, name, tags, disc, b.get("disc_keys") or ())
         if not bid:
             # Writing a refused identity would collide it with every other
             # unidentifiable one.
@@ -218,7 +218,7 @@ def insert_benchmarks_v2(
         # Normalized through the SAME helper the hash uses: unioning raw spellings put both
         # 'GPU' and 'gpu' on one identity, so has(tags,'gpu') and has(tags,'GPU') disagreed
         # about a single canonical row.
-        tag_set = {n for n in (_v2_norm(t) for t in tags) if n}
+        tag_set = {n for n in (_norm(t) for t in tags) if n}
         if prev:
             merged = dict(prev["props"])
             merged.update(props)
@@ -300,7 +300,7 @@ def insert_benchmarks_v2(
     return len(run_rows)
 
 
-def v2_capabilities_already_ingested(
+def capabilities_already_ingested(
     client, db: str, run_id: str, component: str, kind: str = ""
 ) -> bool:
     """capability_runs has no dedup key, so a double ingest doubles every verdict behind a
@@ -323,7 +323,7 @@ def v2_capabilities_already_ingested(
     return bool(rows and rows[0][0] > 0)
 
 
-def insert_capabilities_v2(
+def insert_capabilities(
     client,
     db: str,
     component: str,
@@ -350,7 +350,7 @@ def insert_capabilities_v2(
     for r in results:
         subject, name = r.get("subject", ""), r.get("name", "")
         disc = r.get("disc") or {}
-        cid = v2_capability_id(component, kind, subject, name, disc, disc_keys)
+        cid = capability_id_for(component, kind, subject, name, disc, disc_keys)
         if not cid:
             # Refused identity: writing it anyway collides this row with every other
             # unidentifiable one rather than merely orphaning it.
@@ -373,10 +373,10 @@ def insert_capabilities_v2(
                 "run_id": run_id,
                 "capability_id": cid,
                 "component": component,
-                "arch": v2_canonical_arch(arch),
+                "arch": canonical_arch(arch),
                 "status": r.get("status", ""),
-                "backend": _v2_norm(r.get("backend")),
-                "fail_reason": _v2_norm(r.get("fail_reason")),
+                "backend": _norm(r.get("backend")),
+                "fail_reason": _norm(r.get("fail_reason")),
                 # kind scopes the dedup check; props carries it because it is not in the
                 # sort key and a second kind under one run must not look already-ingested.
                 "props": {"kind": kind, **(r.get("props") or {})},
