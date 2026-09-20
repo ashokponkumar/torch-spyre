@@ -27,15 +27,28 @@ from pathlib import Path
 from .hw_schema import DEFAULT_TABLE, HW_COLUMN_NAMES
 
 
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
+
 @dataclass(frozen=True)
 class RunContext:
-    """The run coordinates the parsed records do not carry themselves."""
+    """The run coordinates the parsed records do not carry themselves.
+
+    `run_id` stays the raw producer coordinate (a GHA run id, a Jenkins build key); `v2_run_id` is
+    the derived uuid5 that joins artifact_results. Both are carried because neither implies the
+    other, and the v2 fields default to nil/'' so an un-updated caller writes "not linked" rather
+    than a hash that would join everything.
+    """
 
     run_id: str = ""
     workflow: str = ""
     branch: str = ""
     sha: str = ""
     run_link: str = ""
+    v2_run_id: str = NIL_UUID
+    component: str = ""
+    arch: str = ""
+    v2_artifact_id: str = NIL_UUID
 
 
 def _parse_ts(ts_str: str) -> datetime | None:
@@ -130,6 +143,11 @@ def build_row(rec: dict, ctx: RunContext) -> list:
         _int(rec.get("tests_error")),
         # ── Stall info ────────────────────────────────────────────────────
         _int(rec.get("stall_max_secs")),
+        # ── v2 join columns ───────────────────────────────────────────────
+        _str(ctx.v2_run_id) or NIL_UUID,
+        _str(ctx.component),
+        _str(ctx.arch),
+        _str(ctx.v2_artifact_id) or NIL_UUID,
     ]
 
 

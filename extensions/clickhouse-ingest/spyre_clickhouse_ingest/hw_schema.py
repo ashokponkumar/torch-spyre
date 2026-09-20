@@ -78,7 +78,15 @@ HW_COLUMN_NAMES = (
     "tests_error",
     # Stall
     "stall_max_secs",
+    # v2 join columns -- appended, never interleaved: insert_rows checks arity only, so a name
+    # inserted mid-tuple would shift every later value one column left without erroring.
+    "v2_run_id",
+    "component",
+    "arch",
+    "v2_artifact_id",
 )
+
+NIL_UUID_DEFAULT = "toUUID('00000000-0000-0000-0000-000000000000')"
 
 # Columns absent from older deployments of this table. ADD COLUMN IF NOT EXISTS is idempotent,
 # so this runs on every ingest and is the only migration path this table has.
@@ -94,6 +102,13 @@ EXTRA_COLUMNS = (
     ("ras_events_json", "String DEFAULT '[]'"),
     # True when the row came from a pod-level-retry job (a fresh-pod re-run), not the original.
     ("pod_level_retry", "Bool DEFAULT false"),
+    # The v2 join columns. Listed here as well as in 45-hw-diagnostics.sql because this ALTER is
+    # the only migration path a LIVE deployment has -- which is what makes the v2 move a config
+    # flip rather than a schema change.
+    ("v2_run_id", f"UUID DEFAULT {NIL_UUID_DEFAULT}"),
+    ("component", "LowCardinality(String) DEFAULT ''"),
+    ("arch", "LowCardinality(String) DEFAULT ''"),
+    ("v2_artifact_id", f"UUID DEFAULT {NIL_UUID_DEFAULT}"),
 )
 
 DEFAULT_TABLE = "hw_failure_diagnostics"

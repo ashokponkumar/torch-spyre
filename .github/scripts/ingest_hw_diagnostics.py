@@ -17,18 +17,25 @@ product repos share one definition; this file is the CLI around it.
 """
 
 import argparse
+import platform as _platform
 import sys
 from collections import Counter
 from pathlib import Path
 
 from spyre_clickhouse_ingest.client import client_summary, get_client
 from spyre_clickhouse_ingest.hw_diagnostics import (
+    NIL_UUID,
     RunContext,
     _str,
     build_row,
     filter_suite_records,
     insert_rows,
     load_records,
+)
+from spyre_clickhouse_ingest.identity import (
+    v2_canonical_arch,
+    v2_component,
+    v2_run_id_for,
 )
 from spyre_clickhouse_ingest.hw_schema import (
     DEFAULT_TABLE,
@@ -67,6 +74,36 @@ def main() -> None:
         "--table",
         default=DEFAULT_TABLE,
         help=f"Target ClickHouse table (default: {DEFAULT_TABLE})",
+    )
+    # v2 join columns. --run-id doubles as the THREADED uuid when the orchestrator minted one;
+    # these supply the coordinate hash inputs for the case where it did not.
+    parser.add_argument(
+        "--component",
+        default="",
+        help="Component whose suite this is (default: torch-spyre)",
+    )
+    parser.add_argument(
+        "--arch",
+        default=_platform.machine(),
+        help="Arch of this leg; amd64 folds to x86_64 (default: this machine's)",
+    )
+    parser.add_argument(
+        "--gha-run-id", default="", help="GHA run id, when GHA dispatched this leg"
+    )
+    parser.add_argument(
+        "--jenkins-run-key",
+        default="",
+        help="Jenkins externalizable id ('folder/job#123'), when Jenkins dispatched this leg",
+    )
+    parser.add_argument(
+        "--trigger-type",
+        default="",
+        help="Test tier of this leg; a test_type hash input for the v2 run id",
+    )
+    parser.add_argument(
+        "--artifact-id",
+        default="",
+        help="v2 artifact_id of the image this leg ran, read from its OCI label / in-image file",
     )
     args = parser.parse_args()
 
@@ -108,12 +145,19 @@ def main() -> None:
         )
         sys.exit(0)
 
+    arch = v2_canonical_arch(args.arch)
     ctx = RunContext(
         run_id=args.run_id,
         workflow=args.workflow,
         branch=args.branch,
         sha=args.sha,
         run_link=args.run_link,
+        # Same two-case rule as every other writer: the threaded uuid when one was supplied,
+        # else the hash of this leg's own CI coordinate.
+        v2_run_id=v2_run_id_for(args, run_id, arch, args.trigger_type) or NIL_UUID,
+        component=v2_component(args),
+        arch=arch,
+        v2_artifact_id=_str(args.artifact_id) or NIL_UUID,
     )
 
     rows = []
@@ -151,6 +195,8 @@ def main() -> None:
     print(f"[info]   workflow : {workflow}")
     print(f"[info]   branch   : {args.branch}")
     print(f"[info]   sha      : {args.sha[:12]}")
+    print(f"[info]   v2_run_id: {ctx.v2_run_id}")
+    print(f"[info]   component: {ctx.component}  arch: {ctx.arch}")
     print()
     print("[info] Outcomes:")
     for outcome, n in sorted(outcomes.items()):
