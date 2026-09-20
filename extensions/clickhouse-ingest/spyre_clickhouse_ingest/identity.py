@@ -237,6 +237,51 @@ def v2_run_id_for(args, run_id: str, arch: str, tier: str) -> str:
     return v2_run_id(source, external, arch, tier)
 
 
+def v2_capability_id(
+    component: str, kind: str, subject: str, name: str, disc=None, disc_keys=()
+) -> str:
+    """Content identity of one (subject, capability) pair, so the same pair reconciles across
+    runs and across the two producers.
+
+    v1 minted a per-row surrogate instead -- model_ops_variants held 51,356 distinct
+    variant_ids for 51,356 rows -- so it identified nothing and no two runs of one operation
+    ever reconciled. This is the same fix v2_test_case_id applied to v1's uuid4 per row.
+
+    `kind` is IN the hash, not just a column: model_ops' `aten::conv2d` and a hypothetical
+    model_support adapter of the same name are different questions about the same subject, and
+    an id that ignored kind would merge them.
+
+    `disc_keys` is positional and per-producer, exactly as v2_benchmark_id: model_ops
+    discriminates on input shapes/dtypes (2,788 (operation, test) pairs expand to 3,707 once
+    counted), while model_support needs none. Reordering the keys mints new ids.
+
+    `backend` is deliberately NOT hashed -- the same capability measured on cpu and on spyre is
+    ONE capability with two verdicts, and it is the axis a support comparison pivots on.
+    """
+    if not (_v2_norm(component) and _v2_norm(kind) and _v2_norm(name)):
+        # An empty field still hashes to a real uuid that every unidentifiable row would
+        # share, which is worse than being orphaned. subject is NOT required: a capability
+        # can be asked of the component as a whole rather than of one model.
+        return ""
+    disc = disc or {}
+    # Absent keys are still emitted, so gaining a discriminator changes only that value.
+    disc_part = ",".join(f"{k}={_v2_norm(disc.get(k))}" for k in disc_keys)
+    return str(
+        uuid.uuid5(
+            V2_NAMESPACE,
+            V2_SEP.join(
+                (
+                    _v2_norm(component),
+                    _v2_norm(kind),
+                    _v2_norm(subject),
+                    _v2_norm(name),
+                    disc_part,
+                )
+            ),
+        )
+    )
+
+
 def v2_benchmark_id(component: str, name: str, tags, disc=None, disc_keys=()) -> str:
     """Content identity of a benchmark, so the same benchmark reconciles across runs.
 

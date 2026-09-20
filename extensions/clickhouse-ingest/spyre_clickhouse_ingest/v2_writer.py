@@ -21,7 +21,14 @@ to the wrong column and the column order lives in exactly one place.
 import sys
 
 from . import schema
-from .identity import _v2_norm, v2_benchmark_id, v2_tags_for_case, v2_test_case_id
+from .identity import (
+    _v2_norm,
+    v2_benchmark_id,
+    v2_canonical_arch,
+    v2_capability_id,
+    v2_tags_for_case,
+    v2_test_case_id,
+)
 
 
 def v2_already_ingested(
@@ -288,6 +295,101 @@ def insert_benchmarks_v2(
     if dropped:
         print(
             f"  [warn] v2: {dropped} benchmark(s) skipped -- no measurements parsed",
+            file=sys.stderr,
+        )
+    return len(run_rows)
+
+
+def v2_capabilities_already_ingested(
+    client, db: str, run_id: str, component: str, kind: str = ""
+) -> bool:
+    """capability_runs has no dedup key, so a double ingest doubles every verdict behind a
+    coverage percentage -- which still looks plausible.
+
+    Scoped by kind as well as run: one run can analyse several kinds (model_ops and
+    model_support are separate scans), and keyed on (component, run_id) alone the first kind
+    written makes every later one look already-ingested and its rows are dropped silently.
+    The same failure benchmark report_kind exists to prevent.
+    """
+    q = (
+        f"SELECT count() FROM {schema.CAPABILITY_RUNS.qualified(db)} "
+        "WHERE component = {component:String} AND run_id = {run_id:UUID}"
+    )
+    params = {"component": component, "run_id": run_id}
+    if kind:
+        q += " AND props['kind'] = {kind:String}"
+        params["kind"] = kind
+    rows = client.query(q, parameters=params).result_rows
+    return bool(rows and rows[0][0] > 0)
+
+
+def insert_capabilities_v2(
+    client,
+    db: str,
+    component: str,
+    run_id: str,
+    kind: str,
+    results: list,
+    arch: str = "",
+    disc_keys=(),
+) -> int:
+    """Write capabilities (identity) + capability_runs (verdict) for one analysis.
+
+    Each entry is a dict: subject, name, status, backend, optional fail_reason, tags, and
+    `disc` (the per-producer discriminator hashed into the identity -- input shapes/dtypes for
+    model_ops, nothing for model_support).
+
+    `backend` is NOT part of the identity: one capability measured on cpu and on spyre is one
+    capability with two verdicts, so the same capability_id carries both rows. That is what
+    makes "supported on spyre but only via cpu fallback" a self-join rather than a stored flag.
+    """
+    if not results:
+        return 0
+    ident_rows, run_rows = {}, []
+    skipped_unidentifiable = 0
+    for r in results:
+        subject, name = r.get("subject", ""), r.get("name", "")
+        disc = r.get("disc") or {}
+        cid = v2_capability_id(component, kind, subject, name, disc, disc_keys)
+        if not cid:
+            # Refused identity: writing it anyway collides this row with every other
+            # unidentifiable one rather than merely orphaning it.
+            skipped_unidentifiable += 1
+            continue
+        tags = sorted({t for t in (r.get("tags") or []) if t})
+        # Keyed by id: identical identity rows within one analysis are one fact. The
+        # discriminator is hashed INTO cid, so it is recorded here rather than re-derived.
+        ident_rows[cid] = {
+            "capability_id": cid,
+            "component": component,
+            "kind": kind,
+            "subject": subject,
+            "name": name,
+            "tags": tags,
+            "props": {k: str(v) for k, v in disc.items() if v not in (None, "")},
+        }
+        run_rows.append(
+            {
+                "run_id": run_id,
+                "capability_id": cid,
+                "component": component,
+                "arch": v2_canonical_arch(arch),
+                "status": r.get("status", ""),
+                "backend": _v2_norm(r.get("backend")),
+                "fail_reason": _v2_norm(r.get("fail_reason")),
+                # kind scopes the dedup check; props carries it because it is not in the
+                # sort key and a second kind under one run must not look already-ingested.
+                "props": {"kind": kind, **(r.get("props") or {})},
+            }
+        )
+    # Cross-run dedup: capabilities is a plain MergeTree, so re-inserting a known identity
+    # appends a duplicate instead of collapsing it.
+    schema.insert_identities(client, schema.CAPABILITIES, ident_rows, db=db)
+    schema.insert(client, schema.CAPABILITY_RUNS, run_rows, db=db)
+    if skipped_unidentifiable:
+        print(
+            f"  [warn] v2: {skipped_unidentifiable} capability result(s) skipped -- "
+            "identity not derivable",
             file=sys.stderr,
         )
     return len(run_rows)

@@ -65,6 +65,10 @@ TEST_TYPE_VALUES = frozenset(
     {"smoke", "unit", "integration", "regression", "trunk", "perf"}
 )
 STATE_VALUES = frozenset({"passed", "failed", "error", "running"})
+# capability_runs.status. NOT the test_case_runs vocabulary: a capability that is
+# not_implemented is an unsupported capability, not a skipped test, and a CPU fallback is a
+# `passed` here with backend='cpu' rather than a status of its own.
+CAPABILITY_STATUS_VALUES = frozenset({"passed", "failed", "not_implemented"})
 
 # NOT constrained, deliberately: the DDL documents tag_family as a declared, extensible set
 # ('nightly | weekly | main | pr') with no CHECK, so validating it here would reject a channel
@@ -217,6 +221,32 @@ BENCHMARK_RUNS = Table(
 # shape, and the artifact tables are where that actually cost us.
 #
 # `ts` omitted throughout, as above: DEFAULT now() on the server.
+
+# Source of truth: schema/46-capabilities.sql. The identity/observation split mirrors
+# test_cases/test_case_runs for the same reason: 246,292 v1 rows carried only 46,607 distinct
+# identities, so a flat table repeated the subject and the input signature on every row.
+CAPABILITIES = Table(
+    name="capabilities",
+    columns=("capability_id", "component", "kind", "subject", "name", "tags", "props"),
+    required=("component", "kind", "name"),
+    identity="capability_id",
+)
+
+CAPABILITY_RUNS = Table(
+    name="capability_runs",
+    columns=(
+        "run_id",
+        "capability_id",
+        "component",
+        "arch",
+        "status",
+        "backend",
+        "fail_reason",
+        "props",
+    ),
+    required=("component",),
+    enums=(("status", CAPABILITY_STATUS_VALUES),),
+)
 
 ARTIFACTS = Table(
     name="artifacts",
