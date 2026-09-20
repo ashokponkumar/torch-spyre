@@ -259,20 +259,10 @@ jobs:
       # GHA-initiated run => empty => the ingest derives its own id from the run coordinate.
       - name: Recover threaded run_id
         id: threaded-run-id
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          RID=""
-          AID=$(gh api --paginate \
-            "/repos/${{ github.repository }}/actions/runs/${TRIGGERING_RUN_ID}/artifacts?per_page=100" \
-            --jq '.artifacts[] | select(.name == "run-id") | .id' | head -1)
-          if [[ -n "${AID}" ]]; then
-            gh api "/repos/${{ github.repository }}/actions/artifacts/${AID}/zip" > run-id.zip || true
-            unzip -o -q run-id.zip -d run-id-dir || true
-            RID=$(tr -d '[:space:]' < run-id-dir/run-id.txt 2>/dev/null || echo "")
-          fi
-          echo "Threaded run_id: ${RID:-<none, ingest will derive>}"
-          echo "run_id=${RID}" >> "${GITHUB_OUTPUT}"
+        uses: ./.github/actions/recover-threaded-run-id
+        with:
+          triggering-run-id: ${{ env.TRIGGERING_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Ingest XML files into ClickHouse
         uses: ./.github/actions/ingest-xml-to-clickhouse
