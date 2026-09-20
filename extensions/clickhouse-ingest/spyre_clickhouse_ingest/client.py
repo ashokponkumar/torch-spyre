@@ -40,14 +40,19 @@ def get_client(*, verify: bool = True):
 
     `verify` exists because one ingest talks to an endpoint whose certificate does not validate;
     it is a parameter rather than a second copy of this function.
+
+    CLICKHOUSE_SECURE=0 drops to plain HTTP, which is the only way to reach a local container
+    (no TLS) -- without it this factory cannot be exercised outside CI, so a test either skips
+    the real insert or hand-rolls a second connection that no longer matches production.
     """
     host = _env("CLICKHOUSE_HOST")
     if not host:
         raise SystemExit(
             "CLICKHOUSE_HOST is unset or empty -- check the workflow's secrets mapping"
         )
+    secure = _env("CLICKHOUSE_SECURE", "1") not in ("0", "false", "no")
     password = _env("CLICKHOUSE_PASS")
-    if not password:
+    if not password and secure:
         raise SystemExit(
             "CLICKHOUSE_PASS is unset or empty -- check the workflow's secrets mapping"
         )
@@ -62,7 +67,7 @@ def get_client(*, verify: bool = True):
         user=_env("CLICKHOUSE_USER", "default"),
         password=password,
         database=_env("CLICKHOUSE_DB", "spyre"),
-        secure=True,
+        secure=secure,
         verify=verify,
     )
 
