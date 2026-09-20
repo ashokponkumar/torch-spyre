@@ -21,7 +21,7 @@ to the wrong column and the column order lives in exactly one place.
 import sys
 
 from . import schema
-from .identity import v2_benchmark_id, v2_tags_for_case, v2_test_case_id
+from .identity import _v2_norm, v2_benchmark_id, v2_tags_for_case, v2_test_case_id
 
 
 def v2_already_ingested(
@@ -208,7 +208,10 @@ def insert_benchmarks_v2(
         # Union, for the same reason props merge: the id hashes NORMALIZED tags, so two
         # entries differing only in case or order share a bid, and taking the last
         # entry's list wholesale would drop tags the other side carried.
-        tag_set = {t for t in tags if t}
+        # Normalized through the SAME helper the hash uses: unioning raw spellings put both
+        # 'GPU' and 'gpu' on one identity, so has(tags,'gpu') and has(tags,'GPU') disagreed
+        # about a single canonical row.
+        tag_set = {n for n in (_v2_norm(t) for t in tags) if n}
         if prev:
             merged = dict(prev["props"])
             merged.update(props)

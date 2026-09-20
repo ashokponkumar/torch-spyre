@@ -89,9 +89,7 @@ def v2_database() -> str:
     return os.environ.get("CLICKHOUSE_DB_V2", "").strip()
 
 
-def v2_tables_present(
-    client, db: str, tables=None, check_columns: bool = False
-) -> bool:
+def v2_tables_present(client, db: str, tables=None, check_columns: bool = True) -> bool:
     """v2 write path is skipped unless every table it needs exists, so this can be
     deployed before the migration without erroring on every run.
 
@@ -102,11 +100,11 @@ def v2_tables_present(
     product repos, and a hardcoded name could drift from the table it checks while still
     looking correct.
 
-    check_columns also diffs each table's live columns against the schema model. Prod
-    once had a `benchmarks` missing `component` (which leads the identity hash) and an
+    check_columns diffs each table's live columns against the schema model, and defaults ON:
+    prod once had a `benchmarks` missing `component` (which leads the identity hash) and an
     existence-only gate passed it, so the gap surfaced as an opaque column-mismatch deep
-    inside the insert -- this turns that into one pre-flight failure naming table and
-    columns, for callers willing to pay the extra round trip per table.
+    inside the insert. A caller that has to opt in is a caller that will forget, and the cost
+    is one extra query per table per ingest. Pass False only to skip the round trip knowingly.
     """
     for t in tables or (schema.TEST_CASES, schema.TEST_CASE_RUNS):
         if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):

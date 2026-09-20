@@ -236,8 +236,10 @@ def test_tags_are_unioned_across_entries_for_one_identity():
     )
     (row,) = _rows(c, BENCHMARKS)[0]
     tags = row[BENCHMARKS.columns.index("tags")]
-    # Every raw spelling seen for this identity survives; none is silently dropped.
-    assert tags == ["TIER__PERF", "mode__serve", "tier__perf"], tags
+    # ONE canonical spelling per member. Unioning the raw strings instead put both
+    # 'TIER__PERF' and 'tier__perf' on this single identity, so has(tags,'tier__perf')
+    # answered differently depending on which spelling a caller guessed.
+    assert tags == ["mode__serve", "tier__perf"], tags
 
 
 def test_name_is_first_write_wins_not_last():

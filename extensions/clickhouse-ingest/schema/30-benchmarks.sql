@@ -95,8 +95,9 @@ CREATE TABLE IF NOT EXISTS benchmark_runs
     -- it sends a pre-averaged number instead -- which is why it is not derived. Without a
     -- sample count a delta cannot be separated from noise. 0 = the producer did not say.
     -- ONE scalar for a row whose metrics may carry different n (avg_latency over 30 runs,
-    -- p99 over 1): it is the max across the merged entries, so it BOUNDS n and does not
-    -- report it per metric. Prefer length(measurements[k]) where the producer sent samples.
+    -- p99 over 1): it is the SUM across the merged entries, since each entry contributes its
+    -- own distinct count. So it is neither a per-metric n nor a bound on one -- two entries
+    -- at 30 and 1 store 31. Use length(measurements[k]) where the producer sent samples.
     iterations   UInt32 DEFAULT 0,
 
     props        Map(LowCardinality(String), String),

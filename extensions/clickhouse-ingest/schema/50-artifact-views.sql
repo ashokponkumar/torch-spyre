@@ -187,7 +187,11 @@ CREATE VIEW IF NOT EXISTS v_tier_trend AS
 -- `runs` counts distinct run_id, not result rows -- one run can carry several result rows,
 -- and a run-count label must not follow the row count.
 SELECT
-    toDate(d.rts)           AS day,
+    -- The RESULT's timestamp, not the tag's resolution timestamp. `d` answers which family an
+    -- artifact belongs to, never when its results ran: an artifact re-tagged into the same
+    -- family on a later day would otherwise fold every earlier day's results into that day
+    -- (measured 504 of 1,220 joined rows landing on the wrong day on prod).
+    toDate(e.ts)            AS day,
     d.fam                   AS tag_family,
     e.result_kind           AS result_kind,
     e.test_type             AS test_type,

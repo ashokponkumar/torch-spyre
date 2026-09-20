@@ -536,7 +536,7 @@ def v2_benchmark_tables_present(client, db: str) -> bool:
     functional-test and benchmark write paths get the same drift protection; only the
     per-table warning naming the missing columns is specific to this call site.
     """
-    if v2_tables_present(client, db, tables=_V2_BENCH_TABLES, check_columns=True):
+    if v2_tables_present(client, db, tables=_V2_BENCH_TABLES):
         return True
     for t in _V2_BENCH_TABLES:
         if not bool(client.command(f"EXISTS TABLE {t.qualified(db)}")):
