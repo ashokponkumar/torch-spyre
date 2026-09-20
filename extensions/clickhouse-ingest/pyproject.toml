@@ -19,3 +19,11 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+# Named explicitly, not auto-discovered: `schema/` sits beside the package as a sibling
+# directory, and flat-layout autodiscovery counts it as a second top-level package and refuses
+# to build ("Multiple top-level packages discovered"). That breaks `pip install` outright,
+# including the `git+https://...#subdirectory=extensions/clickhouse-ingest` form the other repos
+# install with. The .sql files are data applied against a server, never imported.
+[tool.setuptools]
+packages = ["spyre_clickhouse_ingest"]
