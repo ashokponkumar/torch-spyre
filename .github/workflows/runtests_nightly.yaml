@@ -61,6 +61,34 @@ jobs:
       CLICKHOUSE_DB: ${{ secrets.CLICKHOUSE_DB }}
 
   # ---------------------------------------------------------------------------
+  # Model-ops capability suites, as a tier of THIS nightly rather than a cron of
+  # their own. The standalone model_ops_tests_nightly.yaml fired at the same
+  # 0 2 * * *, rebuilt the same wheel two hours after the orchestrator built it,
+  # and minted its own run_id -- so its results could not join artifact_results.
+  # A separate call because test_type is per-call: the run above is `regression`.
+  # ---------------------------------------------------------------------------
+  model-ops:
+    uses: ./.github/workflows/_test_matrix.yaml
+    with:
+      runner_label: linux
+      test_type: capability
+      # -v only: the model-ops suites ran with plain -v under their own workflow, and
+      # --cpu-compile would change what the capability verdicts MEAN (an op compiled for
+      # the CPU is exactly the fallback these suites exist to detect).
+      extra_test_flags: -v
+      checkout_pytorch: true
+      ref: ${{ inputs.ref || '' }}
+      rpm_location: ${{ inputs.rpm_location || '' }}
+      rpm_names: ${{ inputs.rpm_names || '' }}
+      build_torch_spyre: ${{ inputs.build_torch_spyre == true }}
+    secrets:
+      CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
+      CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}
+      CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+      CLICKHOUSE_PASS: ${{ secrets.CLICKHOUSE_PASS }}
+      CLICKHOUSE_DB: ${{ secrets.CLICKHOUSE_DB }}
+
+  # ---------------------------------------------------------------------------
   # Job 2: run-spyre-unit-tests (fan-in gate)
   #
   # Fans in the reusable workflow result. Reports a single green/red status.
