@@ -38,6 +38,20 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schema"
 _LINE_COMMENT = re.compile(r"--[^\n]*")
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 
+# Minimum server version per file, read from a `-- NEEDS CLICKHOUSE >= X.Y` line in its header.
+# Declared in the file rather than here so the requirement travels with the DDL that has it.
+_NEEDS_VERSION = re.compile(r"--\s*NEEDS CLICKHOUSE >=\s*(\d+)\.(\d+)", re.IGNORECASE)
+
+
+def _version_tuple(text: str) -> tuple:
+    return tuple(int(p) for p in re.findall(r"\d+", text)[:2])
+
+
+def required_version(text: str) -> tuple:
+    """The (major, minor) floor this file declares, or () when it declares none."""
+    m = _NEEDS_VERSION.search(text)
+    return (int(m.group(1)), int(m.group(2))) if m else ()
+
 
 def sql_files(schema_dir: Path = SCHEMA_DIR) -> list:
     """The DDL files in apply order, which is filename order (the numeric prefix encodes the
@@ -55,9 +69,9 @@ def statements(text: str) -> list:
     return [s.strip() for s in stripped.split(";") if s.strip()]
 
 
-def apply_file(client, path: Path, dry_run: bool = False) -> int:
+def apply_file(client, path: Path, dry_run: bool = False, text: str = "") -> int:
     """Execute one DDL file. Returns the number of statements applied."""
-    stmts = statements(path.read_text())
+    stmts = statements(text or path.read_text())
     for stmt in stmts:
         if dry_run:
             print(f"    {stmt.splitlines()[0][:100]}")
@@ -69,13 +83,29 @@ def apply_file(client, path: Path, dry_run: bool = False) -> int:
 def apply_all(client, schema_dir: Path = SCHEMA_DIR, dry_run: bool = False) -> int:
     """Apply every DDL file in order. Returns the total statements applied.
 
-    No try/except: a DDL failure means the database does not have the shape the writers assume,
-    and continuing past it would produce exactly the partially-migrated state this module
-    exists to prevent.
+    No try/except around a statement: a DDL failure means the database does not have the shape
+    the writers assume, and continuing past it would produce exactly the partially-migrated
+    state this module exists to prevent.
+
+    A file whose declared version floor the server does not meet is SKIPPED with a warning
+    rather than attempted. Those tables are the OTel exporter's, which we only read, so an old
+    server should still get every table we write -- and the alternative was an opaque
+    "Only literals can be skip index arguments" that stopped the whole apply.
     """
+    server = ()
+    if not dry_run:
+        server = _version_tuple(client.command("SELECT version()"))
     total = 0
     for path in sql_files(schema_dir):
-        stmts = apply_file(client, path, dry_run=dry_run)
+        text = path.read_text()
+        need = required_version(text)
+        if need and server and server < need:
+            print(
+                f"  {path.name:34} SKIPPED -- needs ClickHouse >= "
+                f"{need[0]}.{need[1]}, server is {server[0]}.{server[1]}"
+            )
+            continue
+        stmts = apply_file(client, path, dry_run=dry_run, text=text)
         total += stmts
         print(f"  {path.name:34} {stmts} statement(s)")
     return total

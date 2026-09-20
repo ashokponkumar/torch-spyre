@@ -15,6 +15,12 @@
 --
 -- Regenerate rather than hand-edit, so this file stays byte-faithful to what the exporter made:
 --   SHOW CREATE TABLE <db>.otel_traces   (repeat per table, unqualify the database)
+--
+-- NEEDS CLICKHOUSE >= 25.8. otel_logs carries INDEX ... TYPE text(tokenizer = 'array'), whose
+-- named-argument form an older server rejects with "Only literals can be skip index arguments".
+-- Verified against the live table on prod (26.3), so the syntax is correct for the instance these
+-- tables actually live on -- do NOT downgrade it to satisfy an older local container, which would
+-- make this file diverge from the table it transcribes.
 CREATE TABLE IF NOT EXISTS otel_traces
 (
     `Timestamp` DateTime64(9) CODEC(Delta(8), ZSTD(1)),
