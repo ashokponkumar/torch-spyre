@@ -27,6 +27,7 @@ from spyre_clickhouse_ingest import (
     benchmark_id_for,
     canonical_arch,
     component_of,
+    base_artifact_id,
     gha_artifact_id,
     run_id_of,
     case_id_for,
@@ -188,6 +189,35 @@ def test_gha_artifact_id_lands_in_the_same_column_as_a_built_one():
     # GHA-shaped identity that artifact_results would need another column for.
     got = gha_artifact_id("torch-spyre", "base:1", "pkg-a", "amd64")
     assert uuid.UUID(got).version == 5
+
+
+def test_base_artifact_id_reads_the_in_image_file(tmp_path):
+    # The builder writes the id beside installed_rpms.txt; a test leg runs INSIDE the image
+    # and reads it from there rather than inspecting its own OCI label over the network.
+    f = tmp_path / "spyre_artifact_id.txt"
+    f.write_text("  2B397099-6200-52FB-98C4-B603961A0582 \n")
+    # Normalised, so a builder writing upper-case or a trailing newline still joins.
+    assert base_artifact_id(str(f)) == "2b397099-6200-52fb-98c4-b603961a0582"
+
+
+def test_base_artifact_id_is_blank_when_absent(tmp_path):
+    # An image built before the label existed, or a standalone build with no orchestrator
+    # node. Blank means "no base identity" -- callers must fall back to their own coordinate,
+    # never to a defaulted hash, which every such leg would share.
+    assert base_artifact_id(str(tmp_path / "nope.txt")) == ""
+    empty = tmp_path / "empty.txt"
+    empty.write_text("\n")
+    assert base_artifact_id(str(empty)) == ""
+
+
+def test_gha_artifact_id_chains_onto_a_real_embedded_id():
+    # End-to-end shape: the id spyre-frameworks stamps into the image (verified against prod
+    # for spyre-backend-dev/amd64) is what a GHA leg hashes its delta onto.
+    embedded = "2b397099-6200-52fb-98c4-b603961a0582"
+    got = gha_artifact_id("torch-spyre", embedded, "lxml clickhouse-connect", "amd64")
+    assert uuid.UUID(got).version == 5
+    # Distinct from the base: the leg IS a different artifact from the image it started on.
+    assert got != embedded
 
 
 # The vLLM perf writer's discriminator set. Positional: reordering re-keys every benchmark.

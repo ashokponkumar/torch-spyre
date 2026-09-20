@@ -183,6 +183,30 @@ def gha_artifact_id(
     return artifact_id_for(component, _norm(base_artifact_id), digest, arch)
 
 
+# Where the image build writes its own artifact_id, beside installed_rpms.txt. Set by
+# spyre-frameworks' _package-image (--build-arg SPYRE_ARTIFACT_ID), which also stamps the
+# same value as the `spyre.artifact.id` OCI label.
+BASE_ARTIFACT_ID_FILE = "/home/senuser/spyre_artifact_id.txt"
+
+
+def base_artifact_id(path: str = BASE_ARTIFACT_ID_FILE) -> str:
+    """The prebaked image's own artifact_id, read from inside the image.
+
+    The in-image FILE rather than the OCI label: a test leg runs INSIDE the container and has
+    no registry credentials or skopeo there, so reading its own label would mean an outbound
+    inspect of the image it is already running. The builder writes both from one value.
+
+    Returns '' when absent or blank -- an image built before this existed, or a standalone
+    build with no orchestrator node. Callers must treat that as "no base identity" and fall
+    back to their own coordinate, never to a defaulted hash.
+    """
+    try:
+        with open(path) as fh:
+            return _norm(fh.read())
+    except OSError:
+        return ""
+
+
 def component_of(args, default: str = COMPONENT_DEFAULT) -> str:
     """The component to stamp on v2 rows: --component when given, else `default`.
 
