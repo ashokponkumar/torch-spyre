@@ -22,12 +22,21 @@
 -- FORWARD-ONLY. No backfill: v1 rows cannot produce a run_id (the hash inputs were never
 -- recorded), and v1 model_ops last wrote 2026-09-10 while spyre_v2.artifacts began 2026-09-16.
 --
--- No branch/commit_sha, here or on hw_failure_diagnostics: they describe the ARTIFACT analysed,
--- reached through run_id -> artifact_results -> artifacts, so a per-row copy is duplication that
--- can disagree. NOTE the writer gap -- artifacts does not record them yet: of 4,092 rows, 0 carry
--- a branch or commit_sha prop, and props['ref'] holds an RPM NEVRA glob whose 12-hex is id12, not
--- a commit. The artifact writer owes those two props; until then the git coordinates of a
--- capability run are not recoverable from the warehouse.
+-- No branch/commit_sha, here or on hw_failure_diagnostics: for model_ops they describe the
+-- ARTIFACT analysed, reached through run_id -> artifact_results -> artifacts, so a per-row copy
+-- is duplication that can disagree.
+--
+-- model_support has no such artifact AT ALL, and that asymmetry is deliberate rather than a gap:
+-- it scans HuggingFace Hub checkpoints, not a build of ours, so there is nothing of ours whose
+-- git coordinates would describe the subject. Its provenance is the CHECKPOINT (subject, plus
+-- props from the Hub catalog), and the scan's own code version is recoverable from run_id's
+-- external_run_id. A reader must therefore not assume every capability_run joins an artifact --
+-- only the analyses that examine something we built do.
+--
+-- SHARDED ANALYSES share one run_id. The hf weekly scan fans out over up to 25 parallel shards
+-- per tier, each its own process with its own client, and run_id_of keys on (source, run, arch,
+-- test_type) -- so props['shard'] is the per-writer discriminator the dedup check scopes on,
+-- exactly as test_case_runs uses props['source_file'] for a sharded XML run.
 
 
 -- WHAT can be supported: the stable identity of one (subject, capability) pair.

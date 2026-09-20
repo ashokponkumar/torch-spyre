@@ -31,7 +31,21 @@ import re
 import sys
 from pathlib import Path
 
-SCHEMA_DIR = Path(__file__).resolve().parent.parent / "schema"
+
+def _schema_dir() -> Path:
+    """Where the .sql files live, in a checkout AND in an installed copy.
+
+    Two layouts, because `schema/` is a SIBLING of the package in the repo but is packaged
+    INSIDE it (as package data) by a build -- a sibling directory cannot be installed, and
+    flat-layout autodiscovery refuses to treat it as a second top-level package. Checked in
+    that order so a checkout keeps editing one copy of the DDL rather than a stale build's.
+    """
+    here = Path(__file__).resolve().parent
+    sibling = here.parent / "schema"
+    return sibling if sibling.is_dir() else here / "schema"
+
+
+SCHEMA_DIR = _schema_dir()
 
 # A trailing ';' is optional in the files, and two of them carry ';' inside comment prose, so
 # statements are split after comments are stripped rather than on every ';' in the text.
@@ -92,11 +106,18 @@ def apply_all(client, schema_dir: Path = SCHEMA_DIR, dry_run: bool = False) -> i
     server should still get every table we write -- and the alternative was an opaque
     "Only literals can be skip index arguments" that stopped the whole apply.
     """
+    files = sql_files(schema_dir)
+    if not files:
+        # Raise rather than return 0: an empty glob means the DDL was not found, and reporting
+        # "applied 0 statements" as success leaves the caller believing a database it never
+        # created is ready. Reached for real when the package is installed without its schema
+        # data -- the applier then built nothing and said so in a way nobody could see.
+        raise FileNotFoundError(f"no .sql files in {schema_dir}")
     server = ()
     if not dry_run:
         server = _version_tuple(client.command("SELECT version()"))
     total = 0
-    for path in sql_files(schema_dir):
+    for path in files:
         text = path.read_text()
         need = required_version(text)
         if need and server and server < need:

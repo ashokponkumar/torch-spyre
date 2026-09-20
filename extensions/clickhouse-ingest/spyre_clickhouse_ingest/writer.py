@@ -301,7 +301,12 @@ def insert_benchmarks(
 
 
 def capabilities_already_ingested(
-    client, db: str, run_id: str, component: str, test_type: str = ""
+    client,
+    db: str,
+    run_id: str,
+    component: str,
+    test_type: str = "",
+    shard: str = "",
 ) -> bool:
     """capability_runs has no dedup key, so a double ingest doubles every verdict behind a
     coverage percentage -- which still looks plausible.
@@ -310,6 +315,12 @@ def capabilities_already_ingested(
     model_support are separate scans), and keyed on (component, run_id) alone the first one
     written makes every later one look already-ingested and its rows are dropped silently.
     The same failure benchmark report_kind exists to prevent.
+
+    `shard` narrows it once more, as cases_already_ingested's source_file does. An analysis can
+    be SHARDED across parallel processes that share one run_id: hf-adapters' weekly scan fans
+    out over up to 25 shards per tier, each with its own sink and its own client. Scoped by run
+    alone, the first shard to flush makes every other shard look already-ingested and their
+    verdicts are dropped with no error. Empty matches rows written before this key existed.
     """
     q = (
         f"SELECT count() FROM {schema.CAPABILITY_RUNS.qualified(db)} "
@@ -319,6 +330,9 @@ def capabilities_already_ingested(
     if test_type:
         q += " AND test_type = {tt:String}"
         params["tt"] = test_type
+    if shard:
+        q += " AND props['shard'] = {shard:String}"
+        params["shard"] = shard
     rows = client.query(q, parameters=params).result_rows
     return bool(rows and rows[0][0] > 0)
 
@@ -332,6 +346,7 @@ def insert_capabilities(
     results: list,
     arch: str = "",
     disc_keys=(),
+    shard: str = "",
 ) -> int:
     """Write capabilities (identity) + capability_runs (verdict) for one analysis.
 
@@ -342,6 +357,10 @@ def insert_capabilities(
     `backend` is NOT part of the identity: one capability measured on cpu and on spyre is one
     capability with two verdicts, so the same capability_id carries both rows. That is what
     makes "supported on spyre but only via cpu fallback" a self-join rather than a stored flag.
+
+    `shard` names this writer's slice of a sharded analysis and is stamped into every row's
+    props, so capabilities_already_ingested can scope its dedup per shard rather than letting
+    the first of N parallel writers block the rest.
     """
     if not results:
         return 0
@@ -378,7 +397,12 @@ def insert_capabilities(
                 "status": r.get("status", ""),
                 "backend": _norm(r.get("backend")),
                 "fail_reason": _norm(r.get("fail_reason")),
-                "props": dict(r.get("props") or {}),
+                # shard is applied LAST: it is the dedup scope, so a producer prop of the
+                # same name must not be able to redefine it and let a re-ingest through.
+                "props": {
+                    **{k: str(v) for k, v in (r.get("props") or {}).items()},
+                    **({"shard": shard} if shard else {}),
+                },
             }
         )
     # Cross-run dedup: capabilities is a plain MergeTree, so re-inserting a known identity
