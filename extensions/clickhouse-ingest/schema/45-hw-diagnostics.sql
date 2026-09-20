@@ -12,6 +12,11 @@
 -- A sort key is immutable, so fixing the live table means DROP+CREATE or a rewrite through a
 -- temp table; this file is the shape a fresh database gets.
 --
+-- `workflow` leads rather than `component` (the lead column of every other v2 table): the
+-- dedup filter is (run_id, workflow) and it runs once per ingest, so the key matches the one
+-- query that must never scan. component is not in the key at all -- a single v2 database holds
+-- one row set per workflow, and every real filter names the workflow, not the component.
+--
 -- attempt is in the key because retries are the point: a flaky card shows up as attempt 2+ of
 -- the same (workflow, run, suite), and the retry_trigger/pod_level_retry columns only make sense
 -- read alongside the attempt they belong to.
@@ -19,13 +24,24 @@
 -- No audit_uuid/audit_timestamp: the live table carries both, but no writer sets them, so they
 -- are unwritten defaults rather than data. Same call as v2 jenkins_agents.
 --
--- run_id is a String, not a UUID: it is the GHA run id (or the Jenkins build key), what the
--- producer actually holds. It does NOT join test_case_runs.run_id -- that is a uuid5 over
--- (source, external_run_id, arch, test_type) -- so a reader wanting both must derive the uuid5
--- from this id, not equate them.
+-- TWO run ids, deliberately. `run_id` stays the raw String coordinate the producer holds (a GHA
+-- run id, or a Jenkins build key) -- unchanged, so existing readers keep working. `v2_run_id` is
+-- the uuid5 over (source, external_run_id, arch, test_type) that joins artifact_results, derived
+-- by the same two-case rule as every other writer: the THREADED uuid when the orchestrator
+-- supplied one, else the coordinate hash. Equating the two was never possible; deriving one from
+-- the other is, and that is what this column records so a reader need not recompute it.
+--
+-- component/arch/v2_artifact_id complete the join to the artifact side:
+--   v2_run_id -> artifact_results.run_id -> .artifact_id -> artifacts -> artifact_tags
+-- All four are '' / nil-UUID on an un-updated writer, which reads as "not linked" rather than
+-- mis-linked -- a nil UUID joins nothing, whereas a defaulted hash would join everything.
 CREATE TABLE IF NOT EXISTS hw_failure_diagnostics
 (
     `run_id` String,
+    `v2_run_id` UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
+    `component` LowCardinality(String) DEFAULT '',
+    `arch` LowCardinality(String) DEFAULT '',
+    `v2_artifact_id` UUID DEFAULT toUUID('00000000-0000-0000-0000-000000000000'),
     `workflow` LowCardinality(String) DEFAULT '',
     `branch` LowCardinality(String) DEFAULT '',
     `commit_sha` String DEFAULT '',

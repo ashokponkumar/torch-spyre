@@ -152,17 +152,27 @@ def v2_artifact_id(component: str, artifact_name: str, id12: str, arch: str) -> 
 
 
 def v2_gha_artifact_id(
-    component: str, base_image: str, installed: str, arch: str
+    component: str, base_artifact_id: str, installed: str, arch: str
 ) -> str:
-    """Artifact identity for a GHA-invoked run, where no orchestrator minted an id12.
+    """Artifact identity for a GHA leg that installed something on top of a prebaked image.
 
-    A GHA leg knows what it RAN ON even without a build: the base image plus the set of
-    packages installed into it. Hashing those two into the id12 slot makes such a run joinable
-    on the same column as an orchestrator-built one, so `artifact_results` needs no second,
-    GHA-shaped identity.
+    Such a leg IS a different artifact from the image it started on, so it gets its own
+    artifacts row (origin='gha', identity_deps=[base_artifact_id]) rather than borrowing the
+    base image's id -- otherwise artifact_results.artifact_id would reference a row whose
+    contents were never what ran.
 
-    `installed` is normalised to a SORTED, deduped set: install order is incidental, and an
-    order-sensitive hash would mint a fresh identity for a re-run of the same environment.
+    `base_artifact_id` is the base image's ALREADY-MINTED v2 artifact_id, read back from the
+    image (OCI label / in-image file), not a name or a digest. That is what keeps this
+    non-circular: the identity is a build INPUT the builder recorded, never a hash of the
+    finished image -- baking a digest into the image it describes cannot converge.
+
+    Only the GHA-side delta needs hashing, since everything in the base is recoverable from
+    base_artifact_id. `installed` is normalised to a SORTED, deduped set: install order is
+    incidental, and an order-sensitive hash would mint a fresh identity for a re-run of the
+    same environment.
+
+    A Jenkins-initiated run never reaches here: it runs the prebaked image UNCHANGED, so the
+    embedded artifact_id is already correct and is used verbatim.
     """
     if not (_v2_norm(component) and v2_canonical_arch(arch)):
         return ""
@@ -172,7 +182,7 @@ def v2_gha_artifact_id(
     digest = (
         hashlib.sha256(V2_SEP.join(items).encode()).hexdigest()[:12] if items else ""
     )
-    return v2_artifact_id(component, _v2_norm(base_image), digest, arch)
+    return v2_artifact_id(component, _v2_norm(base_artifact_id), digest, arch)
 
 
 def v2_component(args, default: str = V2_COMPONENT_DEFAULT) -> str:

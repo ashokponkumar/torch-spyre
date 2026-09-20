@@ -20,7 +20,6 @@ Usage (called by the GHA workflow):
 """
 
 import argparse
-import hashlib
 import json
 import os
 import platform as _platform
@@ -36,8 +35,6 @@ from pathlib import Path
 # Aliased to `v2_schema` so the call sites below read unchanged.
 from spyre_clickhouse_ingest import schema as v2_schema
 from spyre_clickhouse_ingest import (
-    V2_NAMESPACE,
-    V2_SEP,
     extract_properties,
     get_client,
     insert_benchmarks_v2,
@@ -45,14 +42,12 @@ from spyre_clickhouse_ingest import (
     promote_xpass,
     v2_already_ingested,
     v2_benchmarks_already_ingested,
-    v2_canonical_arch,
     v2_component,
     v2_database,
     v2_run_id_for,
     v2_source_and_external_run_id,
     v2_tables_present,
 )
-from spyre_clickhouse_ingest.identity import _v2_norm
 from spyre_clickhouse_ingest.junit import _runner_run_id, _threaded_run_id
 import regex as re
 
@@ -1110,59 +1105,6 @@ def insert_properties(client, run_id: str, cases: list[dict]):
 # suite across two components. --component lets the caller name the component whose suite this
 # actually is; product-test already knows it (config.yaml's `PRODUCT`).
 V2_COMPONENT_DEFAULT = "torch-spyre"
-
-
-def v2_artifact_id(component: str, artifact_name: str, id12: str, arch: str) -> str:
-    """Content identity of one built artifact: (component, artifact_name, id12, arch).
-
-    DERIVED, never minted. A consumer that knows only those four fields computes the same
-    id the producer did, with nothing threaded to it -- which is the whole reason it is a
-    hash and not a random uuid. v1's newRunId minted uuid4 and only 0.31% of
-    artifact_results ever resolved against a run; an artifact id has the same exposure.
-
-    The four fields also stay in `props` on the row, because the id is opaque once hashed
-    and nothing downstream can parse a component or an arch back out of it.
-    """
-    if not (_v2_norm(component) and v2_canonical_arch(arch)):
-        # An all-blank hash is a real uuid that every incomplete artifact would share.
-        return ""
-    return str(
-        uuid.uuid5(
-            V2_NAMESPACE,
-            V2_SEP.join(
-                (
-                    _v2_norm(component),
-                    _v2_norm(artifact_name),
-                    _v2_norm(id12),
-                    v2_canonical_arch(arch),
-                )
-            ),
-        )
-    )
-
-
-def v2_gha_artifact_id(
-    component: str, base_image: str, installed: str, arch: str
-) -> str:
-    """Artifact identity for a GHA-invoked run, where no orchestrator minted an id12.
-
-    A GHA leg knows what it RAN ON even without a build: the base image plus the set of
-    packages installed into it. Hashing those two into the id12 slot makes such a run
-    joinable on the same column as an orchestrator-built one, so `artifact_results` needs
-    no second, GHA-shaped identity.
-
-    `installed` is normalised to a SORTED, deduped set: install order is incidental, and an
-    order-sensitive hash would mint a fresh identity for a re-run of the same environment.
-    """
-    if not (_v2_norm(component) and v2_canonical_arch(arch)):
-        return ""
-    items = sorted(
-        {_v2_norm(x) for x in (installed or "").replace(",", " ").split() if x}
-    )
-    digest = (
-        hashlib.sha256(V2_SEP.join(items).encode()).hexdigest()[:12] if items else ""
-    )
-    return v2_artifact_id(component, _v2_norm(base_image), digest, arch)
 
 
 def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> int:
