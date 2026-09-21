@@ -105,19 +105,19 @@ on:
     # workflow even when the caller has it. Both the prod and the _DEV set therefore appear,
     # because the clickhouse_env ternary below reads whichever the caller selected.
     secrets:
-      CLICKHOUSE_HOST:      { required: true }
-      CLICKHOUSE_PORT:      { required: true }
-      CLICKHOUSE_USER:      { required: true }
-      CLICKHOUSE_PASS:      { required: true }
-      CLICKHOUSE_DB:        { required: true }
+      CLICKHOUSE_HOST: {required: true}
+      CLICKHOUSE_PORT: {required: true}
+      CLICKHOUSE_USER: {required: true}
+      CLICKHOUSE_PASS: {required: true}
+      CLICKHOUSE_DB: {required: true}
       # Empty makes the v2 write a no-op, so a caller without it degrades to v1 only.
-      CLICKHOUSE_DB_V2:     { required: false }
-      CLICKHOUSE_HOST_DEV:  { required: false }
-      CLICKHOUSE_PORT_DEV:  { required: false }
-      CLICKHOUSE_USER_DEV:  { required: false }
-      CLICKHOUSE_PASS_DEV:  { required: false }
-      CLICKHOUSE_DB_DEV:    { required: false }
-      CLICKHOUSE_DB_V2_DEV: { required: false }
+      CLICKHOUSE_DB_V2: {required: false}
+      CLICKHOUSE_HOST_DEV: {required: false}
+      CLICKHOUSE_PORT_DEV: {required: false}
+      CLICKHOUSE_USER_DEV: {required: false}
+      CLICKHOUSE_PASS_DEV: {required: false}
+      CLICKHOUSE_DB_DEV: {required: false}
+      CLICKHOUSE_DB_V2_DEV: {required: false}
 
 concurrency:
   # Allow at most one ingest per triggering run (re-runs queue behind)

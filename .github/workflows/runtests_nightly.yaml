@@ -69,6 +69,11 @@ jobs:
   # ---------------------------------------------------------------------------
   model-ops:
     needs: [run-tests]
+    # Independent signal, not gated on run-tests' outcome: needs: is here only to
+    # order the wheel reuse below, and GitHub's default `needs` gating would
+    # otherwise skip this whole tier -- and its nightly capability-drift coverage
+    # -- the first time an unrelated regression-suite job fails or is cancelled.
+    if: ${{ !cancelled() }}
     uses: ./.github/workflows/_test_matrix.yaml
     with:
       runner_label: linux
