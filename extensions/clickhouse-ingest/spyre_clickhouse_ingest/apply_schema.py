@@ -27,9 +27,10 @@ place, so it means DROP+CREATE or a rewrite through a temp table).
 """
 
 import argparse
-import re
 import sys
 from pathlib import Path
+
+import regex as re
 
 
 def _schema_dir() -> Path:

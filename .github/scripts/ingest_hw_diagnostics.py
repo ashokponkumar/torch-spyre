@@ -131,7 +131,18 @@ def main() -> None:
     component = component_of(args)
     # Same two-case rule as every other writer: the threaded uuid when one was supplied, else
     # the hash of this leg's own CI coordinate.
-    run_id = run_id_for(args, external_run_id, arch, args.trigger_type) or NIL_UUID
+    run_id = run_id_for(args, external_run_id, arch, args.trigger_type)
+    if not run_id:
+        # Coercing this to a fixed sentinel (NIL_UUID) would make every underivable run
+        # collide with every other one in the dedup check below, silently dropping runs
+        # that never touched each other. Fail loudly instead.
+        print(
+            f"[error] run_id not derivable (external_run_id={external_run_id!r} "
+            f"arch={arch!r} trigger_type={args.trigger_type!r}); "
+            "--trigger-type is the flag usually missing.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     if already_ingested(client, run_id, component, table=args.table):
         print(

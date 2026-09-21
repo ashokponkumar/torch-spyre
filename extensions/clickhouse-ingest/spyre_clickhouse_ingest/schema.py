@@ -348,6 +348,8 @@ TABLES = {
         ARTIFACT_REFS,
         ARTIFACT_TAGS,
         ARTIFACT_RESULTS,
+        CAPABILITIES,
+        CAPABILITY_RUNS,
     )
 }
 

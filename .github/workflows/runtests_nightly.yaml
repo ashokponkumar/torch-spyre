@@ -68,6 +68,7 @@ jobs:
   # A separate call because test_type is per-call: the run above is `regression`.
   # ---------------------------------------------------------------------------
   model-ops:
+    needs: [run-tests]
     uses: ./.github/workflows/_test_matrix.yaml
     with:
       runner_label: linux
@@ -81,6 +82,13 @@ jobs:
       rpm_location: ${{ inputs.rpm_location || '' }}
       rpm_names: ${{ inputs.rpm_names || '' }}
       build_torch_spyre: ${{ inputs.build_torch_spyre == true }}
+      # Reuse the wheel run-tests already built above instead of rebuilding it a
+      # second time under the same nightly -- exactly the duplication the comment
+      # above says folding this in was meant to end. Only when run-tests actually
+      # built one itself: the RPM-only dispatch path (rpm_names set, build_torch_spyre
+      # false) skips the build there too, so there would be nothing to download.
+      torch_spyre_wheel_artifact_name: >-
+        ${{ (inputs.rpm_names || '') == '' && 'torch-spyre-wheel' || '' }}
     secrets:
       CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
       CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}

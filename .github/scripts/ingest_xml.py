@@ -38,6 +38,7 @@ from spyre_clickhouse_ingest import (
     extract_properties,
     get_client,
     insert_benchmarks,
+    insert_test_results,
     promote_xpass,
     cases_already_ingested,
     benchmarks_already_ingested,
@@ -1555,7 +1556,7 @@ def main():
                     ):
                         print(f"  v2: already ingested run_id={_v2_run_id} — skipping")
                     else:
-                        _n = insert_cases(
+                        _n = insert_test_results(
                             client,
                             v2db,
                             component_of(args, COMPONENT_DEFAULT),

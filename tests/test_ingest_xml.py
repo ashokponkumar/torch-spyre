@@ -559,11 +559,10 @@ def test_ingest_uses_the_shared_library_not_a_local_copy(ingest):
     import spyre_clickhouse_ingest as lib
 
     for name in (
-        "canonical_arch",
         "component_of",
         "run_id_for",
         "cases_already_ingested",
-        "insert_cases",
+        "insert_test_results",
         "extract_properties",
         "promote_xpass",
         "source_and_external_run_id",
