@@ -1,39 +1,24 @@
 name: clickhouse-schema
 
-# Converges the v2 databases on extensions/clickhouse-ingest/schema/.
-#   pull_request: apply to an empty throwaway server twice (the second must be a no-op).
-#   push to main: apply to staging spyre_v2_next, then report what prod would change.
-#   workflow_dispatch: apply to the chosen database -- the only path that changes prod.
+# Applies extensions/clickhouse-ingest/schema/ to an empty throwaway server twice; the second
+# pass must change nothing. Live databases are applied by the spyre-frameworks Jenkins job
+# Spyre/ops/clickhouse-schema, never from here.
 on:
   pull_request:
     paths:
       - extensions/clickhouse-ingest/schema/**
       - extensions/clickhouse-ingest/spyre_clickhouse_ingest/apply_schema.py
       - .github/workflows/clickhouse-schema.yaml
-  push:
-    branches: [main]
-    paths:
-      - extensions/clickhouse-ingest/schema/**
-      - extensions/clickhouse-ingest/spyre_clickhouse_ingest/apply_schema.py
-  workflow_dispatch:
-    inputs:
-      database:
-        description: Database to apply to
-        type: choice
-        options: [spyre_v2_next, spyre_v2]
-        default: spyre_v2_next
 
 concurrency:
-  # DDL against one server must not interleave; PRs use their own throwaway server.
-  group: clickhouse-schema-${{ github.event_name == 'pull_request' && github.run_id || 'live' }}
-  cancel-in-progress: false
+  group: clickhouse-schema-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   fresh:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -66,37 +51,3 @@ jobs:
           uv run python -m spyre_clickhouse_ingest.apply_schema --database v2
           uv run python -m spyre_clickhouse_ingest.apply_schema --database v2 --check
 
-  live:
-    if: github.event_name != 'pull_request' && github.repository == 'torch-spyre/torch-spyre'
-    runs-on:
-      - x86_64
-      - linux
-      - image_ingest
-    timeout-minutes: 30
-    env:
-      CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
-      CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}
-      CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
-      CLICKHOUSE_PASS: ${{ secrets.CLICKHOUSE_PASS }}
-      CLICKHOUSE_DB: ${{ secrets.CLICKHOUSE_DB }}
-      TARGET: ${{ inputs.database || 'spyre_v2_next' }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-      - name: Apply to ${{ env.TARGET }}
-        working-directory: extensions/clickhouse-ingest
-        run: |
-          set -euo pipefail
-          uv run python -m spyre_clickhouse_ingest.apply_schema --database "$TARGET" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Report what prod would change
-        if: env.TARGET != 'spyre_v2'
-        working-directory: extensions/clickhouse-ingest
-        run: |
-          set -uo pipefail
-          {
-            echo '### Pending on prod spyre_v2 (apply via workflow_dispatch)'
-            echo '```'
-            uv run python -m spyre_clickhouse_ingest.apply_schema --database spyre_v2 --check
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY" || true

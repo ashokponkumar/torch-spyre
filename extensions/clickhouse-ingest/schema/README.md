@@ -43,10 +43,10 @@ DDL with the model means a column added to one is reviewed beside the other.
 ## Applying it
 
 `python -m spyre_clickhouse_ingest.apply_schema --database <db>` converges a database on these
-files, and the `clickhouse-schema` workflow runs it: a PR applies to an empty server twice (the
-second pass must change nothing), a merge applies to staging `spyre_v2_next`, and prod
-`spyre_v2` changes only through that workflow's manual dispatch. `--check` prints the pending
-changes and exits 1 if there are any.
+files. The `clickhouse-schema` workflow proves every PR against an empty server (apply twice; the
+second pass must change nothing). Live databases are applied by the spyre-frameworks Jenkins job
+`Spyre/ops/clickhouse-schema`: staging `spyre_v2_next` first, then prod `spyre_v2` behind an
+approval. `--check` prints the pending changes and exits 1 if there are any.
 
 What an apply does, in order:
 
