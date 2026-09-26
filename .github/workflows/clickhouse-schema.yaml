@@ -46,11 +46,6 @@ jobs:
         options: >-
           --health-cmd "wget -qO- http://localhost:8123/ping"
           --health-interval 5s --health-retries 20
-    env:
-      CLICKHOUSE_HOST: localhost
-      CLICKHOUSE_PORT: '8123'
-      CLICKHOUSE_SECURE: '0'
-      CLICKHOUSE_DB: default
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -59,6 +54,12 @@ jobs:
         run: uv run --with pytest python -m pytest -q tests
       - name: Apply to an empty database, then prove it converged
         working-directory: extensions/clickhouse-ingest
+        # Scoped to this step: the unit tests assert on these variables being unset.
+        env:
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: '8123'
+          CLICKHOUSE_SECURE: '0'
+          CLICKHOUSE_DB: default
         run: |
           set -euo pipefail
           curl -sf localhost:8123 --data-binary 'CREATE DATABASE v2'
