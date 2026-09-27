@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS test_cases
 
     -- Replaces the run_properties EAV table. Array, not Map: a namespace (e.g. testtype) repeats.
     tags         Array(LowCardinality(String)),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
 
     CONSTRAINT chk_component CHECK component != '',
     CONSTRAINT chk_name      CHECK name != ''
@@ -43,6 +46,9 @@ CREATE TABLE IF NOT EXISTS test_case_runs
 
     -- Per-execution incidentals; run-scoped data belongs on artifact_results, test-scoped on test_cases.tags.
     props        Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
 
     -- The sort key prunes a run_id-only lookup to parts, not granules; this measured a 5-6x
     -- row-read cut (docs/clickhouse_v2_views.md). Relies on one run belonging to one component.

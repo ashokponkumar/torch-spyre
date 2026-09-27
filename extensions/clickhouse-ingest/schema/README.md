@@ -64,8 +64,12 @@ Rules this implies:
 - A new MV needs a backfill migration for the rows already in its source (MVs fire on insert
   only); cut off at the MV's own `metadata_modification_time` so no row is counted twice — see
   `migrations/002_*`.
-- A file marked `-- APPLY: explicit` (`80-otel.sql`, which lives in the v1 `spyre` database)
-  applies only with `--include <file>`.
+- A file marked `-- APPLY: explicit` applies only with `--include <file>`, for DDL that belongs to
+  a different database. None is marked today.
+- Every fact and dimension table carries `audit_uuid` (UUIDv7) and `audit_timestamp`
+  (DateTime64(3)), as every v1 table does: a stable per-row identity, and an insert time fine
+  enough to order rows written within the same second. Exporter-owned (`otel_*`), upstream-shaped
+  (`oss_ci_*`) and summing (`run_case_counters`) tables are left as their owners define them.
 
 Mechanical constraints behind those rules:
 

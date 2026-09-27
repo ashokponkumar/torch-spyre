@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS benchmarks
     -- input_shapes, run_mode, kernel_name, is_total, batch_size, prompt_length, ...) -- a Map
     -- since producers' identity tuples disagree.
     props        Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
 
     CONSTRAINT chk_component CHECK component != '',
     CONSTRAINT chk_name      CHECK name != ''
@@ -69,6 +72,9 @@ CREATE TABLE IF NOT EXISTS benchmark_runs
     iterations   UInt32 DEFAULT 0,
 
     props        Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
 
     -- regression_status is deliberately absent: a stored verdict with no baseline can't be
     -- checked. Derived in v_benchmark_regression against an explicit baseline run_id.
