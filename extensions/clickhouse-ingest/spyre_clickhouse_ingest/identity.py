@@ -28,6 +28,9 @@ ID_SEP = "|"
 # test cell may run another component's suite, and component is a hash input.
 COMPONENT_DEFAULT = "torch-spyre"
 
+# Tags that describe where a case ran rather than what it is; never part of a case's tags.
+RUN_CONTEXT_TAG_PREFIXES = ("platform__",)
+
 # Full-metadata identity record, one per component layer (each Containerfile overwrites its
 # own). Preferred read path.
 SPYRE_ARTIFACT_JSON_FILE = "/home/senuser/spyre_artifact.json"
@@ -129,7 +132,9 @@ class CaseId(DerivedId):
             elif "__" in pname:
                 # Some emitters put the namespace__value in the property NAME instead.
                 tags.add(pname)
-        return sorted(tags)
+        # The arch a case ran on is a property of the run (artifact_results.arch), not of the
+        # test: kept, it gives one test a different test_case_id on every platform.
+        return sorted(t for t in tags if not t.startswith(RUN_CONTEXT_TAG_PREFIXES))
 
 
 class ArtifactId(DerivedId):

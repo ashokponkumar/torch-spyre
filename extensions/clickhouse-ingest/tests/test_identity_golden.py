@@ -32,6 +32,7 @@ from spyre_clickhouse_ingest import (
     gha_artifact_id,
     run_id_of,
     case_id_for,
+    tags_for_case,
 )
 from spyre_clickhouse_ingest.identity import ArtifactId
 
@@ -78,6 +79,18 @@ def test_test_case_id_sorts_tags():
     assert case_id_for("c", "T", "n", ["b", "a"]) == case_id_for(
         "c", "T", "n", ["a", "b"]
     )
+
+
+def test_test_case_id_is_the_same_on_every_platform():
+    # platform__<arch> is run context; kept as a tag, one test got an id per arch and no
+    # cross-platform comparison could join on test_case_id.
+    def case(arch):
+        props = [("tag", f"platform__{arch}"), ("tag", "testtype__unit")]
+        return {"properties": props}
+
+    x86, power = tags_for_case(case("x86_64")), tags_for_case(case("ppc64le"))
+    assert x86 == power == ["testtype__unit"]
+    assert case_id_for("c", "T", "n", x86) == case_id_for("c", "T", "n", power)
 
 
 def test_canonical_arch_aliases():

@@ -59,7 +59,7 @@ orchestrator.
 
 ```python
 CaseId.derive(component, classname, name, tags)   # -> uuid, or "" without component/name
-CaseId.tags_for(case)                              # JUnit <properties> -> tags array
+CaseId.tags_for(case)                              # JUnit <properties> -> tags array, minus platform__*
 ```
 
 **Use case.** `TestResultWriter.insert` (see [writer.py](#writerpy)) calls
