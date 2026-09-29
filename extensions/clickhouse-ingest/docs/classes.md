@@ -59,13 +59,17 @@ orchestrator.
 
 ```python
 CaseId.derive(component, classname, name, tags)   # -> uuid, or "" without component/name
-CaseId.tags_for(case)                              # JUnit <properties> -> tags array, minus platform__*
+CaseId.tags_for(case)                              # JUnit <properties> -> tags array
+CaseId.split_tags(tags)                            # -> (identity tags, run-context tags)
 ```
 
 **Use case.** `TestResultWriter.insert` (see [writer.py](#writerpy)) calls
 this once per JUnit `<testcase>` so the *same test* — same component,
-classname, name, tags — reconciles across every run that ever exercised it,
-regardless of which CI system or architecture ran it this time.
+classname, name, identity tags — reconciles across every run that ever exercised it,
+regardless of which CI system, architecture or tier ran it this time. Tags in a
+`RUN_CONTEXT_TAG_NAMESPACES` namespace (`platform`, `testtype`, `nightly`, `weekly`,
+`refcoverage`) are never hashed; the writer stores them on the run row
+(`test_case_runs.tags`), the rest on `test_cases.tags`.
 
 ### `ArtifactId(DerivedId)` / `GhaArtifactId(ArtifactId)` — identity of a built thing
 

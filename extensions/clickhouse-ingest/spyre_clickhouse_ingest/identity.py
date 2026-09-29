@@ -28,8 +28,12 @@ ID_SEP = "|"
 # test cell may run another component's suite, and component is a hash input.
 COMPONENT_DEFAULT = "torch-spyre"
 
-# Tags that describe where a case ran rather than what it is; never part of a case's tags.
-RUN_CONTEXT_TAG_PREFIXES = ("platform__",)
+# Tag namespaces that say where/when a test ran (arch, tier, cadence, a measured value), not
+# what it is. Never hashed, so one test keeps one id across arches and tiers. A deny-list: an
+# unclassified namespace can only leave an id split, never merge two different tests.
+RUN_CONTEXT_TAG_NAMESPACES = frozenset(
+    {"platform", "testtype", "nightly", "weekly", "refcoverage"}
+)
 
 # Full-metadata identity record, one per component layer (each Containerfile overwrites its
 # own). Preferred read path.
@@ -67,10 +71,32 @@ class DerivedId:
         """True when every required field is non-blank; a blank one refuses the id."""
         return all(cls.norm(v) for v in values)
 
+    @staticmethod
+    def is_run_context(tag) -> bool:
+        """True for a tag in a RUN_CONTEXT_TAG_NAMESPACES namespace (bare or `ns__value`)."""
+        return DerivedId.norm(tag).split("__", 1)[0] in RUN_CONTEXT_TAG_NAMESPACES
+
+    @classmethod
+    def split_tags(cls, tags) -> tuple:
+        """(identity, run_context) tags, each sorted: what a test is vs where it ran."""
+        tags = sorted(set(tags or []))
+        return (
+            [t for t in tags if not cls.is_run_context(t)],
+            [t for t in tags if cls.is_run_context(t)],
+        )
+
     @classmethod
     def tag_part(cls, tags) -> str:
-        """Tags as a deduped, sorted, comma-joined string -- a SET, not a sequence."""
-        return ",".join(sorted({t for t in (cls.norm(x) for x in (tags or [])) if t}))
+        """Identity tags as a deduped, sorted, comma-joined string -- a SET, not a sequence."""
+        return ",".join(
+            sorted(
+                {
+                    t
+                    for t in (cls.norm(x) for x in (tags or []))
+                    if t and not cls.is_run_context(t)
+                }
+            )
+        )
 
     @classmethod
     def disc_part(cls, disc, disc_keys) -> str:
@@ -132,9 +158,7 @@ class CaseId(DerivedId):
             elif "__" in pname:
                 # Some emitters put the namespace__value in the property NAME instead.
                 tags.add(pname)
-        # The arch a case ran on is a property of the run (artifact_results.arch), not of the
-        # test: kept, it gives one test a different test_case_id on every platform.
-        return sorted(t for t in tags if not t.startswith(RUN_CONTEXT_TAG_PREFIXES))
+        return sorted(tags)
 
 
 class ArtifactId(DerivedId):
@@ -281,6 +305,7 @@ run_id_of = RunId.derive
 run_id_for = RunId.for_args
 case_id_for = CaseId.derive
 tags_for_case = CaseId.tags_for
+split_case_tags = CaseId.split_tags
 artifact_id_for = ArtifactId.derive
 base_artifact_id = ArtifactId.from_image
 gha_artifact_id = GhaArtifactId.derive

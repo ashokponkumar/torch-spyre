@@ -33,6 +33,7 @@ from .hw_schema import HW_COLUMN_NAMES, HwFailureDiagnostics, already_ingested
 from .identity import (
     COMPONENT_DEFAULT,
     ID_NAMESPACE,
+    RUN_CONTEXT_TAG_NAMESPACES,
     ID_SEP,
     ArtifactId,
     BenchmarkId,
@@ -53,6 +54,7 @@ from .identity import (
     installed_digest,
     run_id_for,
     run_id_of,
+    split_case_tags,
     tags_for_case,
 )
 from .junit import (
@@ -82,6 +84,7 @@ __all__ = [
     "COMPONENT_DEFAULT",
     "HW_COLUMN_NAMES",
     "ID_NAMESPACE",
+    "RUN_CONTEXT_TAG_NAMESPACES",
     "ID_SEP",
     "ArtifactId",
     "ArtifactWriter",
@@ -134,6 +137,7 @@ __all__ = [
     "run_id_of",
     "schema",
     "source_and_external_run_id",
+    "split_case_tags",
     "tables_present",
     "tags_for_case",
     "target_database",

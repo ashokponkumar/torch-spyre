@@ -22,8 +22,10 @@ import json
 import uuid
 
 import pytest
+import regex as re
 from spyre_clickhouse_ingest import (
     ID_NAMESPACE,
+    RUN_CONTEXT_TAG_NAMESPACES,
     artifact_id_for,
     benchmark_id_for,
     canonical_arch,
@@ -32,8 +34,10 @@ from spyre_clickhouse_ingest import (
     gha_artifact_id,
     run_id_of,
     case_id_for,
+    split_case_tags,
     tags_for_case,
 )
+from spyre_clickhouse_ingest.apply_schema import SCHEMA_DIR
 from spyre_clickhouse_ingest.identity import ArtifactId
 
 
@@ -81,16 +85,49 @@ def test_test_case_id_sorts_tags():
     )
 
 
-def test_test_case_id_is_the_same_on_every_platform():
-    # platform__<arch> is run context; kept as a tag, one test got an id per arch and no
-    # cross-platform comparison could join on test_case_id.
-    def case(arch):
-        props = [("tag", f"platform__{arch}"), ("tag", "testtype__unit")]
-        return {"properties": props}
+def test_test_case_id_ignores_run_context_tags():
+    # Arch, tier, cadence and measured values describe the run, not the test; hashed, one test
+    # got an id per arch and per tier set and no cross-arch comparison could join on the id.
+    ident = ["op__torch_mul", "dtype__float16"]
+    base = case_id_for("c", "T", "n", ident)
+    for ctx in (
+        ["platform__x86_64", "testtype__unit"],
+        ["platform__ppc64le", "testtype__integration", "testtype__regression"],
+        ["platform__s390x", "nightly", "weekly", "refcoverage__48/48"],
+    ):
+        assert case_id_for("c", "T", "n", ident + ctx) == base
+    assert case_id_for("c", "T", "n", ident + ["op__torch_add"]) != base
 
-    x86, power = tags_for_case(case("x86_64")), tags_for_case(case("ppc64le"))
-    assert x86 == power == ["testtype__unit"]
-    assert case_id_for("c", "T", "n", x86) == case_id_for("c", "T", "n", power)
+
+def test_test_case_id_golden_with_run_context():
+    # Pinned: the migrations/006 SQL recipe must reproduce this value.
+    assert case_id_for(
+        "torch-spyre", "T", "test_x", ["platform__x86_64", "op__torch_mul"]
+    ) == str(uuid.uuid5(ID_NAMESPACE, "torch-spyre|t|test_x|op__torch_mul"))
+
+
+def test_tags_split_into_identity_and_run_context():
+    props = [
+        ("tag", "platform__x86_64"),
+        ("tag", "testtype__unit"),
+        ("tag", "op__torch_mul"),
+        ("tag", "nightly"),
+    ]
+    tags = tags_for_case({"properties": props})
+    assert split_case_tags(tags) == (
+        ["op__torch_mul"],
+        ["nightly", "platform__x86_64", "testtype__unit"],
+    )
+
+
+def test_rekey_migration_matches_run_context_namespaces():
+    # The SQL copy of the rule re-keys history; a namespace in one list but not the other
+    # leaves migrated ids that no writer will ever produce again.
+    sql = (
+        SCHEMA_DIR / "migrations" / "006_case_id_without_run_context.sql"
+    ).read_text()
+    listed = re.search(r"\[([^\]]*)\] AS ctx", sql).group(1)
+    assert set(re.findall(r"'(\w+)'", listed)) == set(RUN_CONTEXT_TAG_NAMESPACES)
 
 
 def test_canonical_arch_aliases():

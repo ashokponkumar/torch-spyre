@@ -88,7 +88,7 @@ class TestResultWriter(RunWriter):
         ident_rows, run_rows = {}, []
         skipped = 0
         for c in cases:
-            tags = CaseId.tags_for(c)
+            tags, run_tags = CaseId.split_tags(CaseId.tags_for(c))
             classname, name = c.get("classname", ""), c.get("name", "")
             tcid = CaseId.derive(component, classname, name, tags)
             if not tcid:
@@ -119,6 +119,7 @@ class TestResultWriter(RunWriter):
                     "ran_in": run_id,
                     **({"source_file": source_file} if source_file else {}),
                 },
+                "tags": run_tags,
             }
             run_rows.append(run_row)
         written = cls._flush(client, db, ident_rows, run_rows)

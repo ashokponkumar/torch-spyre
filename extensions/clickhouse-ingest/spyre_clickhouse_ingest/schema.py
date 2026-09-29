@@ -184,7 +184,7 @@ class TestCaseRow(TypedDict):
 
 
 class TestCases(Table):
-    """Test identity: one row per (component, classname, name, tags)."""
+    """Test identity: one row per (component, classname, name, identity tags)."""
 
     name = "test_cases"
     columns = ("test_case_id", "component", "classname", "name", "tags")
@@ -201,10 +201,11 @@ class TestCaseRunRow(TypedDict):
     duration_s: float
     fail_message: str
     props: dict[str, str]
+    tags: list[str]
 
 
 class TestCaseRuns(Table):
-    """One test's outcome in one run; props carries the source_file discriminator."""
+    """One test's outcome in one run; tags are the run-context tags (tier, arch)."""
 
     name = "test_case_runs"
     columns = (
@@ -215,6 +216,7 @@ class TestCaseRuns(Table):
         "duration_s",
         "fail_message",
         "props",
+        "tags",
     )
     required = ("component",)
     enums = (("status", STATUS_VALUES),)
