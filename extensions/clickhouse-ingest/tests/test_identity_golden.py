@@ -39,7 +39,7 @@ from spyre_clickhouse_ingest import (
     split_case_tags,
     tags_for_case,
 )
-from spyre_clickhouse_ingest.apply_schema import SCHEMA_DIR
+from spyre_clickhouse_ingest.apply_schema import SCHEMA_DIR, SchemaApplier
 from spyre_clickhouse_ingest.identity import ArtifactId
 
 
@@ -144,6 +144,7 @@ def test_rekey_migration_matches_the_tag_rules():
     sql = (
         SCHEMA_DIR / "migrations" / "006_case_id_without_run_context.sql"
     ).read_text()
+    assert SchemaApplier.RERUNNABLE.search(sql)
     assert set(_sql_array(sql, "ctx")) == set(RUN_CONTEXT_TAG_NAMESPACES)
     assert set(_sql_array(sql, "res")) == set(RESULT_TAG_NAMESPACES)
     assert (
@@ -377,6 +378,13 @@ def test_benchmark_id_golden():
         "spyre-inference|serve_granite33-8b_tp1_in64_out64||"
         "record_type=,run_mode=serve,tensor_parallel=1,input_len=,output_len=",
     ) == uuid.UUID("3a681ed6-dc5a-517a-a1c6-bc3367ce815c")
+
+
+def test_benchmark_id_still_hashes_every_tag():
+    # The run-context split is CaseId's recipe; benchmark ids keep theirs.
+    assert benchmark_id_for("c", "matmul", ["platform__x86_64"], {}, ()) != (
+        benchmark_id_for("c", "matmul", [], {}, ())
+    )
 
 
 def test_benchmark_id_normalises_component():

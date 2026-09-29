@@ -111,8 +111,8 @@ class DerivedId:
 
     @classmethod
     def tag_part(cls, tags) -> str:
-        """Identity tags as a deduped, sorted, comma-joined string -- a SET, not a sequence."""
-        return ",".join(sorted({cls.norm(t) for t in cls.split_tags(tags)[0]}))
+        """Tags as a deduped, sorted, comma-joined string -- a SET, not a sequence."""
+        return ",".join(sorted({t for t in (cls.norm(x) for x in (tags or [])) if t}))
 
     @classmethod
     def disc_part(cls, disc, disc_keys) -> str:
@@ -150,6 +150,11 @@ class RunId(DerivedId):
 
 class CaseId(DerivedId):
     """Content identity of a test, so the same test reconciles across runs."""
+
+    @classmethod
+    def tag_part(cls, tags) -> str:
+        """Only the identity tags: run-context and result tags never reach the hash."""
+        return super().tag_part(cls.split_tags(tags)[0])
 
     @classmethod
     def derive(cls, component: str, classname: str, name: str, tags) -> str:

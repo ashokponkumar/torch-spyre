@@ -1,3 +1,4 @@
+-- RERUNNABLE
 -- Re-key test_case_id to the identity-tags-only recipe, so one test has one id across arches and
 -- test types. Every hash input is stored, so history is re-keyed, not abandoned. Applies what
 -- CaseId.split_tags does to a fresh case: legacy bare tags get their namespace, run-context tags
@@ -6,8 +7,14 @@
 -- The uuid5 below is CaseId.derive in SQL; it reproduced all 50,275 stored ids on prod when given
 -- the full tag set. The four arrays must equal RUN_CONTEXT_TAG_NAMESPACES, RESULT_TAG_NAMESPACES
 -- and LEGACY_TAG_ALIASES (keys, values) in identity.py; a test pins that.
+--
+-- Safe to repeat (`apply_schema --rerun`): writers that still carry the old recipe keep minting
+-- old ids, so a later pass re-keys those. Rows written after the snapshot are left for that pass,
+-- never deleted unmoved; case_id_rekey_runs survives a failed pass so its counters get recounted.
 
-CREATE TABLE IF NOT EXISTS case_id_rekey
+DROP TABLE IF EXISTS case_id_rekey;
+
+CREATE TABLE case_id_rekey
 (
     old_id       UUID,
     new_id       UUID,
@@ -17,10 +24,12 @@ CREATE TABLE IF NOT EXISTS case_id_rekey
     name         String,
     id_tags      Array(LowCardinality(String)),
     run_tags     Array(LowCardinality(String)),
-    result_props Map(LowCardinality(String), String)
+    result_props Map(LowCardinality(String), String),
+    snap         DateTime64(3)
 )
 ENGINE = MergeTree ORDER BY old_id;
 
+-- Grouped by old_id: test_cases is written check-then-insert, so an id can hold two rows.
 INSERT INTO case_id_rekey
 WITH
     ['platform', 'testtype', 'cadence'] AS ctx,
@@ -28,74 +37,96 @@ WITH
     ['nightly', 'weekly', 'fvt', 'svt', 'spyre-inference', 'spyre-backend', 'torch-spyre'] AS legacy,
     ['cadence__nightly', 'cadence__weekly', 'testtype__fvt', 'testtype__svt',
      'domain__spyre-inference', 'domain__spyre-backend', 'domain__torch-spyre'] AS aliased
-SELECT
-    test_case_id,
-    toUUID(lower(concat(
-        substring(h, 1, 8), '-', substring(h, 9, 4), '-5', substring(h, 14, 3), '-',
-        substring(hex(bitOr(bitAnd(reinterpretAsUInt8(unhex(concat('0', substring(h, 17, 1)))), 3), 8)), 2, 1),
-        substring(h, 18, 3), '-', substring(h, 21, 12)))),
-    ts, component, classname, name,
-    arraySort(arrayDistinct(id_tags)), run_tags, result_props
+SELECT old_id, any(new_id), min(ts), any(component), any(classname), any(name),
+       any(id_tags), any(run_tags), any(result_props), now64(3)
 FROM
 (
-    SELECT *,
-        hex(substring(SHA1(concat(
-            unhex('cb0af9bf28585eab9211f51190531bf3'),
-            lowerUTF8(trimBoth(component)), '|',
-            lowerUTF8(trimBoth(classname)), '|',
-            lowerUTF8(trimBoth(name)), '|',
-            arrayStringConcat(arraySort(arrayDistinct(
-                arrayMap(t -> lowerUTF8(trimBoth(t)), id_tags))), ','))), 1, 16)) AS h
+    SELECT
+        test_case_id AS old_id,
+        toUUID(lower(concat(
+            substring(h, 1, 8), '-', substring(h, 9, 4), '-5', substring(h, 14, 3), '-',
+            substring(hex(bitOr(bitAnd(reinterpretAsUInt8(unhex(concat('0', substring(h, 17, 1)))), 3), 8)), 2, 1),
+            substring(h, 18, 3), '-', substring(h, 21, 12)))) AS new_id,
+        ts, component, classname, name,
+        arraySort(arrayDistinct(id_tags)) AS id_tags, run_tags, result_props
     FROM
     (
         SELECT *,
-            arrayFilter(t -> NOT has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1])
-                         AND NOT has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS id_tags,
-            arraySort(arrayDistinct(arrayFilter(
-                t -> has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags))) AS run_tags,
-            arrayFilter(t -> has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS rtags,
-            mapFromArrays(
-                arrayMap(t -> concat('result.', splitByString('__', lowerUTF8(trimBoth(t)))[1]), rtags),
-                arrayMap(t -> if(position(t, '__') > 0, substring(t, position(t, '__') + 2), ''), rtags)
-            ) AS result_props
+            hex(substring(SHA1(concat(
+                unhex('cb0af9bf28585eab9211f51190531bf3'),
+                lowerUTF8(trimBoth(component)), '|',
+                lowerUTF8(trimBoth(classname)), '|',
+                lowerUTF8(trimBoth(name)), '|',
+                arrayStringConcat(arraySort(arrayDistinct(
+                    arrayMap(t -> lowerUTF8(trimBoth(t)), id_tags))), ','))), 1, 16)) AS h
         FROM
         (
             SELECT *,
-                arrayMap(t -> if(has(legacy, lowerUTF8(trimBoth(t))),
-                                 transform(lowerUTF8(trimBoth(t)), legacy, aliased, ''), t),
-                         arrayFilter(t -> trimBoth(t) != '', tags)) AS ctags
-            FROM test_cases
+                arrayFilter(t -> NOT has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1])
+                             AND NOT has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS id_tags,
+                arraySort(arrayDistinct(arrayFilter(
+                    t -> has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags))) AS run_tags,
+                arrayFilter(t -> has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS rtags,
+                mapFromArrays(
+                    arrayMap(t -> concat('result.', splitByString('__', lowerUTF8(trimBoth(t)))[1]), rtags),
+                    arrayMap(t -> if(position(t, '__') > 0, substring(t, position(t, '__') + 2), ''), rtags)
+                ) AS result_props
+            FROM
+            (
+                SELECT *,
+                    arrayMap(t -> if(has(legacy, lowerUTF8(trimBoth(t))),
+                                     transform(lowerUTF8(trimBoth(t)), legacy, aliased, ''), t),
+                             arrayFilter(t -> trimBoth(t) != '', tags)) AS ctags
+                FROM test_cases
+            )
         )
     )
-);
+)
+WHERE new_id != old_id
+GROUP BY old_id;
 
 -- One identity row per new id, unless a case already holds it.
 INSERT INTO test_cases (ts, test_case_id, component, classname, name, tags)
 SELECT min(ts), new_id, any(component), argMin(classname, ts), argMin(name, ts), argMin(id_tags, ts)
 FROM case_id_rekey
-WHERE new_id != old_id AND new_id NOT IN (SELECT test_case_id FROM test_cases)
+WHERE new_id NOT IN (SELECT test_case_id FROM test_cases)
 GROUP BY new_id;
 
--- audit_uuid/audit_timestamp carried over: a moved row is the same observation. The row's own
--- props win over a result tag's, as in the writer.
-INSERT INTO test_case_runs
-    (ts, run_id, test_case_id, component, status, duration_s, fail_message, props, tags,
-     audit_uuid, audit_timestamp)
-SELECT r.ts, r.run_id, k.new_id, r.component, r.status, r.duration_s, r.fail_message,
-       mapUpdate(k.result_props, r.props), k.run_tags, r.audit_uuid, r.audit_timestamp
+CREATE TABLE IF NOT EXISTS case_id_rekey_runs (run_id UUID) ENGINE = MergeTree ORDER BY run_id;
+
+INSERT INTO case_id_rekey_runs
+SELECT DISTINCT r.run_id
 FROM test_case_runs AS r
 INNER JOIN case_id_rekey AS k ON k.old_id = r.test_case_id
-WHERE k.new_id != k.old_id;
+WHERE r.audit_timestamp <= k.snap;
+
+-- audit_uuid/audit_timestamp carried over: a moved row is the same observation, and its
+-- audit_uuid is what makes a repeated pass skip it. The row's own props win over a result tag's.
+INSERT INTO test_case_runs
+    (ts, run_id, test_case_id, component, status, duration_s, fail_message, props, tags,
+     measurements, audit_uuid, audit_timestamp)
+SELECT r.ts, r.run_id, k.new_id, r.component, r.status, r.duration_s, r.fail_message,
+       mapUpdate(k.result_props, r.props), arraySort(arrayDistinct(arrayConcat(r.tags, k.run_tags))),
+       r.measurements, r.audit_uuid, r.audit_timestamp
+FROM test_case_runs AS r
+INNER JOIN case_id_rekey AS k ON k.old_id = r.test_case_id
+WHERE r.audit_timestamp <= k.snap
+  AND r.audit_uuid NOT IN (
+      SELECT audit_uuid FROM test_case_runs
+      WHERE test_case_id IN (SELECT new_id FROM case_id_rekey));
 
 DELETE FROM test_case_runs
-WHERE test_case_id IN (SELECT old_id FROM case_id_rekey WHERE new_id != old_id);
+WHERE test_case_id IN (SELECT old_id FROM case_id_rekey)
+  AND audit_timestamp <= (SELECT max(snap) FROM case_id_rekey);
 
+-- An old id that a post-snapshot row still uses keeps its identity row, for the next pass.
 DELETE FROM test_cases
-WHERE test_case_id IN (SELECT old_id FROM case_id_rekey WHERE new_id != old_id);
+WHERE test_case_id IN (SELECT old_id FROM case_id_rekey)
+  AND test_case_id NOT IN (SELECT test_case_id FROM test_case_runs);
 
--- The re-insert above fired run_case_counters_mv a second time for every moved row; the
--- counters are per run, not per case, so a full recount is exact.
-TRUNCATE TABLE run_case_counters;
+-- The move fired run_case_counters_mv again and the DELETE subtracted nothing: recount the
+-- touched runs from scratch.
+DELETE FROM run_case_counters WHERE run_id IN (SELECT run_id FROM case_id_rekey_runs);
 
 INSERT INTO run_case_counters
 SELECT
@@ -109,6 +140,9 @@ SELECT
     countIf(status = 'xfail'),
     countIf(status = 'xpass')
 FROM test_case_runs
+WHERE run_id IN (SELECT run_id FROM case_id_rekey_runs)
 GROUP BY run_id, component;
+
+DROP TABLE case_id_rekey_runs;
 
 DROP TABLE case_id_rekey;
