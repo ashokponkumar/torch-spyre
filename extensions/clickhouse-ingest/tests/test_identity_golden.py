@@ -25,6 +25,8 @@ import pytest
 import regex as re
 from spyre_clickhouse_ingest import (
     ID_NAMESPACE,
+    LEGACY_TAG_ALIASES,
+    RESULT_TAG_NAMESPACES,
     RUN_CONTEXT_TAG_NAMESPACES,
     artifact_id_for,
     benchmark_id_for,
@@ -86,17 +88,24 @@ def test_test_case_id_sorts_tags():
 
 
 def test_test_case_id_ignores_run_context_tags():
-    # Arch, tier, cadence and measured values describe the run, not the test; hashed, one test
-    # got an id per arch and per tier set and no cross-arch comparison could join on the id.
+    # Arch, test type and cadence describe the run, not the test; hashed, one test got an id
+    # per arch and per test-type set and no cross-arch comparison could join on the id.
     ident = ["op__torch_mul", "dtype__float16"]
     base = case_id_for("c", "T", "n", ident)
     for ctx in (
         ["platform__x86_64", "testtype__unit"],
         ["platform__ppc64le", "testtype__integration", "testtype__regression"],
-        ["platform__s390x", "nightly", "weekly", "refcoverage__48/48"],
+        ["platform__s390x", "nightly", "weekly", "fvt", "svt", "cadence__nightly"],
+        ["refcoverage__48/48"],
     ):
         assert case_id_for("c", "T", "n", ident + ctx) == base
     assert case_id_for("c", "T", "n", ident + ["op__torch_add"]) != base
+
+
+def test_legacy_bare_tags_hash_as_their_namespaced_form():
+    assert case_id_for("c", "T", "n", ["torch-spyre"]) == case_id_for(
+        "c", "T", "n", ["domain__torch-spyre"]
+    )
 
 
 def test_test_case_id_golden_with_run_context():
@@ -106,28 +115,41 @@ def test_test_case_id_golden_with_run_context():
     ) == str(uuid.uuid5(ID_NAMESPACE, "torch-spyre|t|test_x|op__torch_mul"))
 
 
-def test_tags_split_into_identity_and_run_context():
+def test_tags_split_into_identity_run_context_and_results():
     props = [
         ("tag", "platform__x86_64"),
         ("tag", "testtype__unit"),
         ("tag", "op__torch_mul"),
         ("tag", "nightly"),
+        ("tag", "svt"),
+        ("tag", "spyre-inference"),
+        ("tag", "refcoverage__48/48"),
     ]
     tags = tags_for_case({"properties": props})
     assert split_case_tags(tags) == (
-        ["op__torch_mul"],
-        ["nightly", "platform__x86_64", "testtype__unit"],
+        ["domain__spyre-inference", "op__torch_mul"],
+        ["cadence__nightly", "platform__x86_64", "testtype__svt", "testtype__unit"],
+        {"result.refcoverage": "48/48"},
     )
 
 
-def test_rekey_migration_matches_run_context_namespaces():
-    # The SQL copy of the rule re-keys history; a namespace in one list but not the other
-    # leaves migrated ids that no writer will ever produce again.
+def _sql_array(sql, alias):
+    listed = re.search(rf"\[([^\]]*)\] AS {alias}\b", sql).group(1)
+    return re.findall(r"'([^']+)'", listed)
+
+
+def test_rekey_migration_matches_the_tag_rules():
+    # The SQL copy of the rule re-keys history; a mismatch leaves migrated ids that no writer
+    # will ever produce again.
     sql = (
         SCHEMA_DIR / "migrations" / "006_case_id_without_run_context.sql"
     ).read_text()
-    listed = re.search(r"\[([^\]]*)\] AS ctx", sql).group(1)
-    assert set(re.findall(r"'(\w+)'", listed)) == set(RUN_CONTEXT_TAG_NAMESPACES)
+    assert set(_sql_array(sql, "ctx")) == set(RUN_CONTEXT_TAG_NAMESPACES)
+    assert set(_sql_array(sql, "res")) == set(RESULT_TAG_NAMESPACES)
+    assert (
+        dict(zip(_sql_array(sql, "legacy"), _sql_array(sql, "aliased")))
+        == LEGACY_TAG_ALIASES
+    )
 
 
 def test_canonical_arch_aliases():

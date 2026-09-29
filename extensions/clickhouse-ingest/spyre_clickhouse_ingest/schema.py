@@ -26,7 +26,17 @@ METHOD_VALUES = frozenset({"container-pull", "dnf", "pip", "download"})
 REF_KIND_VALUES = frozenset({"pullspec", "glob", "url"})
 RESULT_KIND_VALUES = frozenset({"functional", "performance", "image"})
 TEST_TYPE_VALUES = frozenset(
-    {"smoke", "unit", "integration", "regression", "trunk", "perf", "capability"}
+    {
+        "smoke",
+        "unit",
+        "integration",
+        "regression",
+        "trunk",
+        "perf",
+        "fvt",
+        "svt",
+        "capability",
+    }
 )
 # Which capability analysis produced a capability_runs row -- a sibling vocabulary to
 # TEST_TYPE_VALUES, not a subset of it.
@@ -202,10 +212,11 @@ class TestCaseRunRow(TypedDict):
     fail_message: str
     props: dict[str, str]
     tags: list[str]
+    measurements: dict[str, float]
 
 
 class TestCaseRuns(Table):
-    """One test's outcome in one run; tags are the run-context tags (tier, arch)."""
+    """One test's outcome in one run: run-context tags, recorded measurements and results."""
 
     name = "test_case_runs"
     columns = (
@@ -217,6 +228,7 @@ class TestCaseRuns(Table):
         "fail_message",
         "props",
         "tags",
+        "measurements",
     )
     required = ("component",)
     enums = (("status", STATUS_VALUES),)

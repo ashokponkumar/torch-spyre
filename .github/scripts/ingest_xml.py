@@ -1183,7 +1183,8 @@ def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> 
         # wider set, and importing all of it would credit this tier with foreign cases.
         client.command(
             f"INSERT INTO {runs} "
-            "(run_id, test_case_id, component, status, duration_s, fail_message, props, tags) "
+            "(run_id, test_case_id, component, status, duration_s, fail_message, props, tags, "
+            "measurements) "
             "SELECT {run_id:UUID}, cr.test_case_id, cr.component, cr.status, cr.duration_s, "
             # mapContains rather than a bare lookup: an older row predating ran_in has no
             # such key, and defaulting it to the SOURCE run keeps that row honest instead of
@@ -1191,7 +1192,7 @@ def copy_reused_cases(client, db: str, run_id: str, component: str, covered) -> 
             "       cr.fail_message, "
             "       mapUpdate(cr.props, map('ran_in', "
             "           if(mapContains(cr.props,'ran_in'), cr.props['ran_in'], toString(cr.run_id)))), "
-            "       cr.tags "
+            "       cr.tags, cr.measurements "
             f"FROM {runs} AS cr "
             "WHERE cr.run_id = {src:UUID} AND cr.component = {component:String} "
             "  AND has(cr.tags, concat('testtype__', {tier:String}))",

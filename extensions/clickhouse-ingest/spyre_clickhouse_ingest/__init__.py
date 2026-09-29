@@ -33,6 +33,8 @@ from .hw_schema import HW_COLUMN_NAMES, HwFailureDiagnostics, already_ingested
 from .identity import (
     COMPONENT_DEFAULT,
     ID_NAMESPACE,
+    LEGACY_TAG_ALIASES,
+    RESULT_TAG_NAMESPACES,
     RUN_CONTEXT_TAG_NAMESPACES,
     ID_SEP,
     ArtifactId,
@@ -84,6 +86,8 @@ __all__ = [
     "COMPONENT_DEFAULT",
     "HW_COLUMN_NAMES",
     "ID_NAMESPACE",
+    "LEGACY_TAG_ALIASES",
+    "RESULT_TAG_NAMESPACES",
     "RUN_CONTEXT_TAG_NAMESPACES",
     "ID_SEP",
     "ArtifactId",

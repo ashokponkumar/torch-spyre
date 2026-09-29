@@ -28,12 +28,26 @@ ID_SEP = "|"
 # test cell may run another component's suite, and component is a hash input.
 COMPONENT_DEFAULT = "torch-spyre"
 
-# Tag namespaces that say where/when a test ran (arch, tier, cadence, a measured value), not
-# what it is. Never hashed, so one test keeps one id across arches and tiers. A deny-list: an
-# unclassified namespace can only leave an id split, never merge two different tests.
-RUN_CONTEXT_TAG_NAMESPACES = frozenset(
-    {"platform", "testtype", "nightly", "weekly", "refcoverage"}
-)
+# Tag namespaces that say where/when a test ran (arch, test type, cadence), not what it is.
+# Never hashed, so one test keeps one id across arches and test types; stored per run. A
+# deny-list: an unclassified namespace can only leave an id split, never merge two tests.
+RUN_CONTEXT_TAG_NAMESPACES = frozenset({"platform", "testtype", "cadence"})
+
+# Tag namespaces that carry a measured value (`refcoverage__48/48`): not membership at all, so
+# neither hashed nor tagged -- stored as props['result.<ns>'].
+RESULT_TAG_NAMESPACES = frozenset({"refcoverage"})
+
+# Bare tags older emitters wrote, mapped to their namespaced form; migrations/006 applies the
+# same map to history.
+LEGACY_TAG_ALIASES = {
+    "nightly": "cadence__nightly",
+    "weekly": "cadence__weekly",
+    "fvt": "testtype__fvt",
+    "svt": "testtype__svt",
+    "spyre-inference": "domain__spyre-inference",
+    "spyre-backend": "domain__spyre-backend",
+    "torch-spyre": "domain__torch-spyre",
+}
 
 # Full-metadata identity record, one per component layer (each Containerfile overwrites its
 # own). Preferred read path.
@@ -72,31 +86,33 @@ class DerivedId:
         return all(cls.norm(v) for v in values)
 
     @staticmethod
-    def is_run_context(tag) -> bool:
-        """True for a tag in a RUN_CONTEXT_TAG_NAMESPACES namespace (bare or `ns__value`)."""
-        return DerivedId.norm(tag).split("__", 1)[0] in RUN_CONTEXT_TAG_NAMESPACES
+    def canon_tag(tag) -> str:
+        """A legacy bare tag in its namespaced form (lowercase); any other tag unchanged."""
+        return LEGACY_TAG_ALIASES.get(DerivedId.norm(tag), tag)
+
+    @staticmethod
+    def namespace(tag) -> str:
+        return DerivedId.norm(DerivedId.canon_tag(tag)).split("__", 1)[0]
 
     @classmethod
     def split_tags(cls, tags) -> tuple:
-        """(identity, run_context) tags, each sorted: what a test is vs where it ran."""
-        tags = sorted(set(tags or []))
-        return (
-            [t for t in tags if not cls.is_run_context(t)],
-            [t for t in tags if cls.is_run_context(t)],
-        )
+        """(identity tags, run-context tags, result props) -- what a test is, where it ran,
+        and values it measured."""
+        ident, ctx, results = set(), set(), {}
+        for t in (cls.canon_tag(x) for x in (tags or []) if cls.norm(x)):
+            ns = cls.namespace(t)
+            if ns in RESULT_TAG_NAMESPACES:
+                results[f"result.{ns}"] = t.split("__", 1)[1] if "__" in t else ""
+            elif ns in RUN_CONTEXT_TAG_NAMESPACES:
+                ctx.add(t)
+            else:
+                ident.add(t)
+        return sorted(ident), sorted(ctx), results
 
     @classmethod
     def tag_part(cls, tags) -> str:
         """Identity tags as a deduped, sorted, comma-joined string -- a SET, not a sequence."""
-        return ",".join(
-            sorted(
-                {
-                    t
-                    for t in (cls.norm(x) for x in (tags or []))
-                    if t and not cls.is_run_context(t)
-                }
-            )
-        )
+        return ",".join(sorted({cls.norm(t) for t in cls.split_tags(tags)[0]}))
 
     @classmethod
     def disc_part(cls, disc, disc_keys) -> str:
