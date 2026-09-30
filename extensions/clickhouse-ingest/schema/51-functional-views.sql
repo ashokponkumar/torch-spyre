@@ -102,6 +102,8 @@ FROM
 ) AS ran
 INNER JOIN
 (
+    -- Scans all of test_case_runs' history per query; a small per-(component, tier) aggregate
+    -- is the follow-up once retention makes that slow.
     SELECT component, substring(tag, 11) AS tier, uniqExact(test_case_id) AS want_total
     FROM test_case_runs
     ARRAY JOIN tags AS tag

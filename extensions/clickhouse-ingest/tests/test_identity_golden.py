@@ -109,7 +109,7 @@ def test_legacy_bare_tags_hash_as_their_namespaced_form():
 
 
 def test_test_case_id_golden_with_run_context():
-    # Pinned: the migrations/006 SQL recipe must reproduce this value.
+    # Pinned beside the migrations/006 SQL too (its header), so an edit to either is visible in review.
     assert case_id_for(
         "torch-spyre", "T", "test_x", ["platform__x86_64", "op__torch_mul"]
     ) == str(uuid.uuid5(ID_NAMESPACE, "torch-spyre|t|test_x|op__torch_mul"))

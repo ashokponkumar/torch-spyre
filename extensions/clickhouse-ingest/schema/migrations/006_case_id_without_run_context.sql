@@ -5,8 +5,11 @@
 -- move to the run row, result tags (refcoverage) move to its props as result.<ns>.
 --
 -- The uuid5 below is CaseId.derive in SQL; it reproduced all 50,275 stored ids on prod when given
--- the full tag set. The four arrays must equal RUN_CONTEXT_TAG_NAMESPACES, RESULT_TAG_NAMESPACES
--- and LEGACY_TAG_ALIASES (keys, values) in identity.py; a test pins that.
+-- the full tag set. Pinned for review, matching test_identity_golden: component 'torch-spyre',
+-- classname 'T', name 'test_x', tags [platform__x86_64, op__torch_mul]
+-- -> 54bb0d72-7e92-55c4-bea8-675abd4dcc41.
+-- The four arrays must equal RUN_CONTEXT_TAG_NAMESPACES, RESULT_TAG_NAMESPACES and
+-- LEGACY_TAG_ALIASES (keys, values) in identity.py; a test pins that.
 --
 -- Safe to repeat (`apply_schema --rerun`): writers that still carry the old recipe keep minting
 -- old ids, so a later pass re-keys those. Rows written after the snapshot are left for that pass,
@@ -34,6 +37,8 @@ INSERT INTO case_id_rekey
 WITH
     ['platform', 'testtype', 'cadence'] AS ctx,
     ['refcoverage'] AS res,
+    -- str.strip()'s ASCII whitespace; lowerUTF8 and str.lower() differ only on rare non-ASCII.
+    ' \t\n\r\x0B\x0C' AS ws,
     ['nightly', 'weekly', 'fvt', 'svt', 'spyre-inference', 'spyre-backend', 'torch-spyre'] AS legacy,
     ['cadence__nightly', 'cadence__weekly', 'testtype__fvt', 'testtype__svt',
      'domain__spyre-inference', 'domain__spyre-backend', 'domain__torch-spyre'] AS aliased
@@ -54,29 +59,29 @@ FROM
         SELECT *,
             hex(substring(SHA1(concat(
                 unhex('cb0af9bf28585eab9211f51190531bf3'),
-                lowerUTF8(trimBoth(component)), '|',
-                lowerUTF8(trimBoth(classname)), '|',
-                lowerUTF8(trimBoth(name)), '|',
+                lowerUTF8(trimBoth(component, ws)), '|',
+                lowerUTF8(trimBoth(classname, ws)), '|',
+                lowerUTF8(trimBoth(name, ws)), '|',
                 arrayStringConcat(arraySort(arrayDistinct(
-                    arrayMap(t -> lowerUTF8(trimBoth(t)), id_tags))), ','))), 1, 16)) AS h
+                    arrayMap(t -> lowerUTF8(trimBoth(t, ws)), id_tags))), ','))), 1, 16)) AS h
         FROM
         (
             SELECT *,
-                arrayFilter(t -> NOT has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1])
-                             AND NOT has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS id_tags,
+                arrayFilter(t -> NOT has(ctx, splitByString('__', lowerUTF8(trimBoth(t, ws)))[1])
+                             AND NOT has(res, splitByString('__', lowerUTF8(trimBoth(t, ws)))[1]), ctags) AS id_tags,
                 arraySort(arrayDistinct(arrayFilter(
-                    t -> has(ctx, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags))) AS run_tags,
-                arrayFilter(t -> has(res, splitByString('__', lowerUTF8(trimBoth(t)))[1]), ctags) AS rtags,
+                    t -> has(ctx, splitByString('__', lowerUTF8(trimBoth(t, ws)))[1]), ctags))) AS run_tags,
+                arrayFilter(t -> has(res, splitByString('__', lowerUTF8(trimBoth(t, ws)))[1]), ctags) AS rtags,
                 mapFromArrays(
-                    arrayMap(t -> concat('result.', splitByString('__', lowerUTF8(trimBoth(t)))[1]), rtags),
+                    arrayMap(t -> concat('result.', splitByString('__', lowerUTF8(trimBoth(t, ws)))[1]), rtags),
                     arrayMap(t -> if(position(t, '__') > 0, substring(t, position(t, '__') + 2), ''), rtags)
                 ) AS result_props
             FROM
             (
                 SELECT *,
-                    arrayMap(t -> if(has(legacy, lowerUTF8(trimBoth(t))),
-                                     transform(lowerUTF8(trimBoth(t)), legacy, aliased, ''), t),
-                             arrayFilter(t -> trimBoth(t) != '', tags)) AS ctags
+                    arrayMap(t -> if(has(legacy, lowerUTF8(trimBoth(t, ws))),
+                                     transform(lowerUTF8(trimBoth(t, ws)), legacy, aliased, ''), t),
+                             arrayFilter(t -> trimBoth(t, ws) != '', tags)) AS ctags
                 FROM test_cases
             )
         )
@@ -115,9 +120,12 @@ WHERE r.audit_timestamp <= k.snap
       SELECT audit_uuid FROM test_case_runs
       WHERE test_case_id IN (SELECT new_id FROM case_id_rekey));
 
+-- Only rows whose copy exists under the new id: a row that committed after the move read the
+-- table was never copied, and waits for the next pass instead of being lost.
 DELETE FROM test_case_runs
 WHERE test_case_id IN (SELECT old_id FROM case_id_rekey)
-  AND audit_timestamp <= (SELECT max(snap) FROM case_id_rekey);
+  AND audit_uuid IN (SELECT audit_uuid FROM test_case_runs
+                     WHERE test_case_id IN (SELECT new_id FROM case_id_rekey));
 
 -- An old id that a post-snapshot row still uses keeps its identity row, for the next pass.
 DELETE FROM test_cases
@@ -125,7 +133,8 @@ WHERE test_case_id IN (SELECT old_id FROM case_id_rekey)
   AND test_case_id NOT IN (SELECT test_case_id FROM test_case_runs);
 
 -- The move fired run_case_counters_mv again and the DELETE subtracted nothing: recount the
--- touched runs from scratch.
+-- touched runs from scratch. A row inserted into a touched run between this DELETE and the
+-- recount is counted twice, so run a pass while no ingest is writing.
 DELETE FROM run_case_counters WHERE run_id IN (SELECT run_id FROM case_id_rekey_runs);
 
 INSERT INTO run_case_counters

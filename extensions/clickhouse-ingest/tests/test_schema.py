@@ -640,6 +640,7 @@ def test_one_test_on_two_arches_is_one_identity_with_per_run_context():
         props = [("tag", t) for t in tags] + [
             ("metric.latency_ms", str(latency)),
             ("metric.bad", "n/a"),
+            ("metric.", "7"),  # no metric name: not a measurement
             ("result.backend", "spyre"),
             ("single_input_index", "3"),
         ]

@@ -144,7 +144,7 @@ class TestResultWriter(RunWriter):
         for pname, pvalue in case.get("properties", []) or []:
             if pname == "tag" or "__" in pname:
                 continue
-            if pname.startswith("metric."):
+            if pname.startswith("metric.") and len(pname) > len("metric."):
                 try:
                     v = float(pvalue)
                 except (TypeError, ValueError):
