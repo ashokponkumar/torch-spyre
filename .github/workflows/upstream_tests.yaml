@@ -89,6 +89,8 @@ jobs:
       test_type: trunk
       extra_test_flags: -v
       checkout_pytorch: true
+      # Bakes the pytorch release tree at $TORCH_ROOT, so checkout-pytorch skips the clone.
+      image_label: image_torch_spyre
       report_retention_days: 90
     secrets:
       CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
