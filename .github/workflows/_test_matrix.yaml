@@ -189,9 +189,19 @@ on:
         required: false
       CLICKHOUSE_DB:
         required: false
-      # The v2 database for the covered-tier lookup. The other four CLICKHOUSE_* secrets
-      # above already serve it -- one instance, one naming scheme.
+      # Shared-connection v2 database: the fallback while CLICKHOUSE_V2_HOST is unset.
       CLICKHOUSE_DB_V2:
+        required: false
+      # v2's own connection, for the covered-tier lookup and the perf v2 write.
+      CLICKHOUSE_V2_HOST:
+        required: false
+      CLICKHOUSE_V2_PORT:
+        required: false
+      CLICKHOUSE_V2_USER:
+        required: false
+      CLICKHOUSE_V2_PASS:
+        required: false
+      CLICKHOUSE_V2_DB:
         required: false
 
 defaults:
@@ -268,15 +278,13 @@ jobs:
           ENABLE_TIER_DELTA: ${{ inputs.enable_tier_delta }}
           DELTA_SHA: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
           DELTA_ARCH: ${{ inputs.runner_label }}
-          # Same secrets the ingest path uses. Previously these read a SPYRE_CH_* set of
-          # vars/secrets that was never configured in any repo or org, so the lookup always
-          # took its unset branch and every run silently ran the FULL tier -- the delta could
-          # not fire at all. Absent secrets still fail open, by design.
-          CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_HOST }}
-          CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_PORT }}
-          CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
-          CLICKHOUSE_PASS: ${{ secrets.CLICKHOUSE_PASS }}
-          CLICKHOUSE_DB_V2: ${{ secrets.CLICKHOUSE_DB_V2 }}
+          # A v2-only read: the v2 connection, else (fallback, remove once every repo has
+          # CLICKHOUSE_V2_*) the shared one. Absent secrets fail open to the full tier.
+          CLICKHOUSE_HOST: ${{ secrets.CLICKHOUSE_V2_HOST || secrets.CLICKHOUSE_HOST }}
+          CLICKHOUSE_PORT: ${{ secrets.CLICKHOUSE_V2_HOST && secrets.CLICKHOUSE_V2_PORT || secrets.CLICKHOUSE_PORT }}
+          CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_V2_HOST && secrets.CLICKHOUSE_V2_USER || secrets.CLICKHOUSE_USER }}
+          CLICKHOUSE_PASS: ${{ secrets.CLICKHOUSE_V2_HOST && secrets.CLICKHOUSE_V2_PASS || secrets.CLICKHOUSE_PASS }}
+          CLICKHOUSE_DB_V2: ${{ secrets.CLICKHOUSE_V2_HOST && secrets.CLICKHOUSE_V2_DB || secrets.CLICKHOUSE_DB_V2 }}
         run: |
           # Prebaked: read the configs baked in the dev image; else the checkout cwd.
           # cd into the source root so every path below stays repo-relative and
@@ -926,6 +934,11 @@ jobs:
           # Without these two the v2 write is a no-op, so benchmark_runs stays empty and the
           # benchmark path is unreachable -- the perf job is its only producer.
           clickhouse-db-v2: ${{ secrets.CLICKHOUSE_DB_V2 }}
+          clickhouse-v2-host: ${{ secrets.CLICKHOUSE_V2_HOST }}
+          clickhouse-v2-port: ${{ secrets.CLICKHOUSE_V2_PORT }}
+          clickhouse-v2-user: ${{ secrets.CLICKHOUSE_V2_USER }}
+          clickhouse-v2-pass: ${{ secrets.CLICKHOUSE_V2_PASS }}
+          clickhouse-v2-db: ${{ secrets.CLICKHOUSE_V2_DB }}
           schema: both
 
       # Four honesty lines. Echo only — never upload report.xml (public

@@ -118,6 +118,16 @@ on:
       CLICKHOUSE_PASS_DEV: {required: false}
       CLICKHOUSE_DB_DEV: {required: false}
       CLICKHOUSE_DB_V2_DEV: {required: false}
+      CLICKHOUSE_V2_HOST: {required: false}
+      CLICKHOUSE_V2_PORT: {required: false}
+      CLICKHOUSE_V2_USER: {required: false}
+      CLICKHOUSE_V2_PASS: {required: false}
+      CLICKHOUSE_V2_DB: {required: false}
+      CLICKHOUSE_V2_HOST_DEV: {required: false}
+      CLICKHOUSE_V2_PORT_DEV: {required: false}
+      CLICKHOUSE_V2_USER_DEV: {required: false}
+      CLICKHOUSE_V2_PASS_DEV: {required: false}
+      CLICKHOUSE_V2_DB_DEV: {required: false}
 
 concurrency:
   # Allow at most one ingest per triggering run (re-runs queue behind)
@@ -169,6 +179,18 @@ jobs:
       # with incompatible shapes and an unqualified name would hit the wrong one. Empty/unset
       # makes the v2 write a no-op, which keeps an un-updated caller behaving as before.
       CLICKHOUSE_DB_V2: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_DB_V2 || secrets.CLICKHOUSE_DB_V2_DEV }}
+      # v2's own connection; empty falls back to the shared one above. Never crosses
+      # instances: an unset prod secret stays empty instead of reading the _DEV one.
+      CLICKHOUSE_V2_HOST: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_V2_HOST || inputs.clickhouse_env == 'dev' && secrets.CLICKHOUSE_V2_HOST_DEV
+        || '' }}
+      CLICKHOUSE_V2_PORT: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_V2_PORT || inputs.clickhouse_env == 'dev' && secrets.CLICKHOUSE_V2_PORT_DEV
+        || '' }}
+      CLICKHOUSE_V2_USER: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_V2_USER || inputs.clickhouse_env == 'dev' && secrets.CLICKHOUSE_V2_USER_DEV
+        || '' }}
+      CLICKHOUSE_V2_PASS: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_V2_PASS || inputs.clickhouse_env == 'dev' && secrets.CLICKHOUSE_V2_PASS_DEV
+        || '' }}
+      CLICKHOUSE_V2_DB: ${{ inputs.clickhouse_env != 'dev' && secrets.CLICKHOUSE_V2_DB || inputs.clickhouse_env == 'dev' && secrets.CLICKHOUSE_V2_DB_DEV
+        || '' }}
       # Dual-write during the migration window: v1 stays authoritative, v2 accumulates the
       # same runs so the new schema can be validated against real traffic before anything
       # depends on it. No data is ported -- v1 rows cannot produce a v2 run_id -- so `both` is
@@ -409,6 +431,11 @@ jobs:
           clickhouse-pass: ${{ env.CLICKHOUSE_PASS }}
           clickhouse-db: ${{ env.CLICKHOUSE_DB }}
           clickhouse-db-v2: ${{ env.CLICKHOUSE_DB_V2 }}
+          clickhouse-v2-host: ${{ env.CLICKHOUSE_V2_HOST }}
+          clickhouse-v2-port: ${{ env.CLICKHOUSE_V2_PORT }}
+          clickhouse-v2-user: ${{ env.CLICKHOUSE_V2_USER }}
+          clickhouse-v2-pass: ${{ env.CLICKHOUSE_V2_PASS }}
+          clickhouse-v2-db: ${{ env.CLICKHOUSE_V2_DB }}
           schema: ${{ env.INGEST_SCHEMA }}
 
       - name: Summary

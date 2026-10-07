@@ -96,10 +96,31 @@ inputs:
     default: ''
   clickhouse-db-v2:
     description: >
-      Schema-v2 database. hw_failure_diagnostics has the same shape in both generations, so
-      the v2 write reinserts the same rows qualified with this database name instead of
-      diverging into a different table model. Empty makes the v2 write a no-op, so a caller
-      without it degrades to v1 only.
+      Schema-v2 database on the shared clickhouse-* connection; used only while
+      clickhouse-v2-host is empty. hw_failure_diagnostics has the same shape in both
+      generations, so v2 reinserts the same rows qualified with it. Empty makes v2 a no-op.
+    required: false
+    default: ''
+  clickhouse-v2-host:
+    description: >
+      The v2 connection (secrets CLICKHOUSE_V2_HOST/PORT/USER/PASS/DB). Set, the v2 write uses
+      it in a run of its own; empty falls back to clickhouse-* + clickhouse-db-v2.
+    required: false
+    default: ''
+  clickhouse-v2-port:
+    description: v2 ClickHouse port.
+    required: false
+    default: ''
+  clickhouse-v2-user:
+    description: v2 ClickHouse user.
+    required: false
+    default: ''
+  clickhouse-v2-pass:
+    description: v2 ClickHouse password.
+    required: false
+    default: ''
+  clickhouse-v2-db:
+    description: The spyre_v2 database on the v2 connection.
     required: false
     default: ''
   schema:
@@ -123,7 +144,7 @@ runs:
       id: gate
       shell: bash
       env:
-        CH_HOST: ${{ inputs.clickhouse-host }}
+        CH_HOST: ${{ inputs.clickhouse-host || inputs.clickhouse-v2-host }}
       run: |
         if [ -z "${CH_HOST}" ]; then
           echo "::notice::ClickHouse host not configured — skipping ingest."
@@ -234,6 +255,11 @@ runs:
         CH_USER_IN: ${{ inputs.clickhouse-user }}
         CH_DB_IN: ${{ inputs.clickhouse-db }}
         CH_DB_V2_IN: ${{ inputs.clickhouse-db-v2 }}
+        V2_HOST: ${{ inputs.clickhouse-v2-host }}
+        V2_PORT: ${{ inputs.clickhouse-v2-port }}
+        V2_USER: ${{ inputs.clickhouse-v2-user }}
+        V2_PASS: ${{ inputs.clickhouse-v2-pass }}
+        V2_DB: ${{ inputs.clickhouse-v2-db }}
         SCHEMA_IN: ${{ inputs.schema }}
         RUN_URL_IN: ${{ inputs.run-url }}
         REPO: ${{ inputs.repository || github.repository }}
@@ -244,14 +270,23 @@ runs:
         [ -n "${CH_PORT_IN}" ] && export CLICKHOUSE_PORT="${CH_PORT_IN}"
         [ -n "${CH_USER_IN}" ] && export CLICKHOUSE_USER="${CH_USER_IN}"
         [ -n "${CH_DB_IN}" ] && export CLICKHOUSE_DB="${CH_DB_IN}"
-        # Only exported when non-empty: target_database() treats an unset value as "v2 not
-        # configured", which is what makes the v1 default cost nothing.
-        [ -n "${CH_DB_V2_IN}" ] && export CLICKHOUSE_DB_V2="${CH_DB_V2_IN}"
-        [ -n "${SCHEMA_IN}" ] && export INGEST_SCHEMA="${SCHEMA_IN}"
+        SCHEMA="${SCHEMA_IN:-${INGEST_SCHEMA:-v1}}"
+        if [ -z "${V2_HOST}" ]; then
+          # v2 fallback onto the shared connection: remove once every repo has CLICKHOUSE_V2_*.
+          if [ "${SCHEMA}" != v1 ] && [ -n "${CH_DB_V2_IN}" ]; then
+            echo "::notice title=v2 ClickHouse::v2 written over the shared CLICKHOUSE_* secrets;" \
+                 "add CLICKHOUSE_V2_HOST/PORT/USER/PASS/DB to give v2 its own."
+          fi
+          # Only exported when non-empty: target_database() treats an unset value as "v2 not
+          # configured", which is what makes the v1 default cost nothing.
+          if [ -n "${CH_DB_V2_IN}" ]; then export CLICKHOUSE_DB_V2="${CH_DB_V2_IN}"; fi
+        fi
         RUN_URL="${RUN_URL_IN:-${{ github.server_url }}/${REPO}/actions/runs/${RUN_ID}}"
         TABLE_ARGS=()
         [ -n "${{ inputs.table }}" ] && TABLE_ARGS=(--table "${{ inputs.table }}")
-        python3 "${ROOT}/.github/scripts/ingest_hw_diagnostics.py" \
+        ingest() {
+          python3 "${ROOT}/.github/scripts/ingest_hw_diagnostics.py" \
+          --schema         "$1" \
           --json-file      "${JSON_FILE}" \
           --run-id         "${{ inputs.threaded-run-id }}" \
           --component      "${{ inputs.component }}" \
@@ -262,3 +297,21 @@ runs:
           --run-url        "${RUN_URL}" \
           --artifact-id    "${{ inputs.artifact-id }}" \
           "${TABLE_ARGS[@]}"
+        }
+        if [ -z "${V2_HOST}" ]; then
+          ingest "${SCHEMA}"
+          exit
+        fi
+        # Its own connection is its own run: one process holds one client.
+        rc=0
+        if [ "${SCHEMA}" != v2 ] && [ -n "${CLICKHOUSE_HOST:-}" ]; then
+          ingest v1 || rc=$?
+        fi
+        if [ "${SCHEMA}" != v1 ]; then
+          export CLICKHOUSE_HOST="${V2_HOST}" CLICKHOUSE_PASS="${V2_PASS}" \
+                 CLICKHOUSE_DB="${V2_DB}" CLICKHOUSE_DB_V2="${V2_DB}"
+          if [ -n "${V2_PORT}" ]; then export CLICKHOUSE_PORT="${V2_PORT}"; fi
+          if [ -n "${V2_USER}" ]; then export CLICKHOUSE_USER="${V2_USER}"; fi
+          ingest v2 || rc=$?
+        fi
+        exit "${rc}"
