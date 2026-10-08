@@ -462,6 +462,16 @@ def test_rpm_provenance_missing_commit_is_incomplete(ingest):
     assert ingest.classify_run_quality(json.dumps(absent)) == ("incomplete", 0)
 
 
+def test_kernel_xml_nested_components_are_classified(ingest):
+    """Kernel XMLs wrap the components with system info; both shapes must classify."""
+    nested = {"components": RPM_PROVENANCE, "system": {"architecture": "ppc64le"}}
+    assert ingest.classify_run_quality(json.dumps(nested)) == ("valid", 1)
+    partial = dict(RPM_PROVENANCE)
+    del partial["flex/ibm-flex"]
+    nested["components"] = partial
+    assert ingest.classify_run_quality(json.dumps(nested)) == ("incomplete", 0)
+
+
 def test_bare_bad_commit_falls_through_to_rpm_alias(ingest):
     """OR semantics: bare N/A must not block a good RPM commit (#4896)."""
     payload = dict(FULL_PROVENANCE)

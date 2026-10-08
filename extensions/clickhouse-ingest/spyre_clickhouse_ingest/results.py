@@ -473,6 +473,9 @@ def classify_run_quality(version_info: str | None) -> tuple[str, int]:
         info = json.loads(version_info)
     except (TypeError, ValueError):
         return "incomplete", 0
+    # Kernel XMLs nest the components: {"components": {...}, "system": {...}}.
+    if isinstance(info, dict) and isinstance(info.get("components"), dict):
+        info = info["components"]
     if not isinstance(info, dict):
         return "incomplete", 0
     for key in _REQUIRED_PROVENANCE_KEYS:
