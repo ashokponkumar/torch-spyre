@@ -15,6 +15,11 @@
 """failure_* props on a verdict: kept only where the leg did not pass, and a reason that
 arrives after the write-once verdict still lands, in artifact_result_reasons."""
 
+import json
+from pathlib import Path
+
+import regex as re
+from spyre_clickhouse_ingest.apply_schema import SCHEMA_DIR
 from spyre_clickhouse_ingest.results import _first_failure, _leg_failure
 from spyre_clickhouse_ingest.schema import (
     ARTIFACT_RESULT_REASONS,
@@ -28,6 +33,9 @@ import pytest
 
 from test_artifact_writer import FakeClient, _rows
 
+BUNDLE_SCHEMA = (
+    Path(__file__).parents[1] / "spyre_clickhouse_ingest" / "bundle.schema.json"
+)
 AID = "2b397099-6200-52fb-98c4-b603961a0582"
 RUN = "1a6080e8-d061-547f-ab63-1af99b18ad0c"
 WHY = {"failure_reason": "infra_timeout", "failure_subreason": "card_lock"}
@@ -118,12 +126,39 @@ def test_cli_defaults_name_the_first_failing_case():
             {"name": "test_mul", "status": "error", "fail_message": "boom"},
         ],
     )
-    assert _leg_failure("failed", acc) == {
+    assert _leg_failure("failed", acc, {}) == {
         "failure_reason": "test_failure",
         "failure_detail": "2 of 9 failed: test_add: AssertionError",
+        "failure_confidence": "1",
     }
-    assert (
-        _leg_failure("error", {"failed": 0, "total": 0})["failure_subreason"]
-        == "no_cases"
+    caseless = {"failed": 0, "total": 0}
+    assert _leg_failure("error", caseless, {})["failure_subreason"] == "no_cases"
+    assert _leg_failure("passed", acc, {}) == {}
+
+
+def test_any_caller_failure_prop_replaces_every_default():
+    caseless = {"failed": 0, "total": 0}
+    assert _leg_failure("error", caseless, {"failure_reason": "infra_hardware"}) == {}
+
+
+@pytest.mark.parametrize("given,kept", [("12.5", "12"), (30, "30"), ("soon", None)])
+def test_wait_is_whole_seconds_or_dropped(given, kept):
+    props = ArtifactWriter.failure_props("error", {**WHY, "failure_wait_s": given})
+    assert props.get("failure_wait_s") == kept
+
+
+def test_a_cli_default_lands_late_at_its_own_confidence():
+    client = FakeClient(counts=[1])
+    _verdict(
+        client, "error", {"failure_reason": "ingest_error", "failure_confidence": "1"}
     )
-    assert _leg_failure("passed", acc) == {}
+    (reason,) = _rows(client, ARTIFACT_RESULT_REASONS)
+    assert reason["confidence"] == 1
+
+
+def test_the_reason_vocabulary_matches_the_ddl_check_and_the_bundle_schema():
+    ddl = (SCHEMA_DIR / "20-artifacts.sql").read_text()
+    check = re.search(r"chk_failure_reason CHECK failure_reason IN\s*\(([^)]*)\)", ddl)
+    assert set(re.findall(r"'([a-z_]+)'", check.group(1))) == FAILURE_REASON_VALUES
+    perf = json.loads(BUNDLE_SCHEMA.read_text())["properties"]["perf"]["properties"]
+    assert set(perf["failure_reason"]["enum"]) == FAILURE_REASON_VALUES

@@ -1262,20 +1262,25 @@ def _leg_state(failed: int, total: int) -> str:
     return "failed" if failed > 0 else "passed"
 
 
-def _leg_failure(state: str, acc: dict) -> dict:
-    """The failure_* props the cases themselves explain; a caller's --result-prop wins."""
+def _leg_failure(state: str, acc: dict, result_props: dict) -> dict:
+    """The failure_* props the cases themselves explain, ranked as a default (confidence 1) so a
+    later collector's reason still wins. Any caller-given failure_* replaces all of them."""
+    if any(k.startswith("failure_") for k in result_props):
+        return {}
     if state == "failed":
         first = acc.get("first_failure", "")
         return {
             "failure_reason": "test_failure",
             "failure_detail": f"{acc['failed']} of {acc['total']} failed"
             + (f": {first}" if first else ""),
+            "failure_confidence": "1",
         }
     if state == "error":
         return {
             "failure_reason": "ingest_error",
             "failure_subreason": "no_cases",
             "failure_detail": "the leg reported no test cases",
+            "failure_confidence": "1",
         }
     return {}
 
@@ -1446,7 +1451,7 @@ def _write_named_artifact_verdicts(client, v2db: str, args, legs: dict) -> bool:
             arch=args.arch,
             duration_s=acc["duration_s"],
             props={
-                **_leg_failure(state, acc),
+                **_leg_failure(state, acc, result_props),
                 **result_props,
                 "run_url": run_url,
                 "source": source,

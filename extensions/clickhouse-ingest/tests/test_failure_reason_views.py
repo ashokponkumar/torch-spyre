@@ -38,6 +38,16 @@ VERDICTS = {
     "08": ("error", {"diagnosis": "infra_result_lost"}),
     "09": ("error", {"closed_reason": "parent_hung_jenkins_restart"}),
     "10": ("failed", {"closed_reason": "parent_manual_abort"}),
+    "11": (
+        "error",
+        {
+            "failure_reason": "ingest_error",
+            "failure_subreason": "no_cases",
+            "failure_confidence": "1",
+        },
+    ),
+    "12": ("error", {}),
+    "13": ("error", {"runner_died": "true"}),
 }
 
 
@@ -67,14 +77,19 @@ def db():
         f"VALUES ('{_rid('03')}', 'torch-spyre', 5, 3, 2), ('{_rid('10')}', 'torch-spyre', 12, 1, 11)"
     )
     reasons = [
-        (_rid("06"), "infra_timeout", "card_lock", 2, "backfill-console"),
-        (_rid("07"), "infra_env", "", 2, "backfill-console"),
+        (_rid("06"), "infra_timeout", "card_lock", 2, "backfill-console", "10:00"),
+        (_rid("07"), "infra_env", "", 2, "backfill-console", "10:00"),
+        (_rid("11"), "infra_timeout", "inner", 3, "jenkins", "10:00"),
+        # One source re-classifying: its later, lower-confidence row is its answer.
+        (_rid("12"), "infra_hardware", "", 3, "collector", "10:00"),
+        (_rid("12"), "infra_network", "", 1, "collector", "11:00"),
     ]
-    for rid, reason, sub, conf, src in reasons:
+    for rid, reason, sub, conf, src, at in reasons:
         s.query(
-            "INSERT INTO artifact_result_reasons (artifact_id, run_id, result_kind, test_type, "
-            "failure_reason, failure_subreason, failure_wait_s, confidence, source) VALUES "
-            f"('{AID}', '{rid}', 'functional', 'unit', '{reason}', '{sub}', 18000, {conf}, '{src}')"
+            "INSERT INTO artifact_result_reasons (updated_at, artifact_id, run_id, result_kind, "
+            "test_type, failure_reason, failure_subreason, failure_wait_s, confidence, source) "
+            f"VALUES ('2026-10-10 {at}:00', '{AID}', '{rid}', 'functional', 'unit', '{reason}', "
+            f"'{sub}', 18000, {conf}, '{src}')"
         )
     yield {
         r["run_id"][-2:]: r
@@ -138,3 +153,15 @@ def test_a_jenkins_restart_reads_as_infra(db):
 def test_a_failed_close_is_explained_by_its_cases_not_the_cleanup(db):
     assert _why(db, "10") == ("test_failure", "", "derived")
     assert db["10"]["failure_detail"] == "11 of 12 cases failed"
+
+
+def test_a_later_collector_outranks_the_clis_default(db):
+    assert _why(db, "11") == ("infra_timeout", "inner", "jenkins")
+
+
+def test_a_sources_latest_row_is_its_answer_whatever_its_confidence(db):
+    assert _why(db, "12") == ("infra_network", "", "collector")
+
+
+def test_groovys_runner_died_true_reads_as_infra(db):
+    assert _why(db, "13") == ("infra_capacity", "runner_died", "writer")

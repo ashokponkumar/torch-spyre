@@ -798,6 +798,7 @@ class ArtifactWriter:
         "failure_detail",
         "failure_log_url",
         "failure_wait_s",
+        "failure_confidence",
     )
     FAILURE_DETAIL_MAX = 300
 
@@ -1032,7 +1033,7 @@ class ArtifactWriter:
                     test_type=test_type,
                     result_kind=kind,
                     props=props,
-                    confidence=3,
+                    confidence=int(props.get("failure_confidence") or 3),
                     source=props.get("source") or "writer",
                 )
             return True
@@ -1086,6 +1087,12 @@ class ArtifactWriter:
             out["failure_reason"] = "unknown"
         if out.get("failure_detail"):
             out["failure_detail"] = str(out["failure_detail"])[: cls.FAILURE_DETAIL_MAX]
+        if "failure_wait_s" in out:
+            # Whole seconds, as the view's toUInt32OrZero reads them; a bad value is dropped.
+            try:
+                out["failure_wait_s"] = str(int(float(out["failure_wait_s"])))
+            except (TypeError, ValueError):
+                out.pop("failure_wait_s")
         return out
 
     @classmethod
@@ -1115,7 +1122,7 @@ class ArtifactWriter:
             "failure_subreason": p.get("failure_subreason", ""),
             "failure_detail": p.get("failure_detail", ""),
             "failure_log_url": p.get("failure_log_url") or p.get("run_url", ""),
-            "failure_wait_s": int(float(p.get("failure_wait_s") or 0)),
+            "failure_wait_s": int(p.get("failure_wait_s") or 0),
             "confidence": confidence,
             "source": source,
             "props": {},

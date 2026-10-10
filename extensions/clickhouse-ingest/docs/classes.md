@@ -296,8 +296,9 @@ ArtifactWriter.insert_reason(client, db, *, artifact_id, run_id, test_type, prop
 
 **Failure reasons.** A failed/error verdict carries `props.failure_reason` (one of
 `schema.FAILURE_REASON_VALUES`), `failure_subreason`, `failure_detail` (≤300 chars),
-`failure_log_url` and `failure_wait_s`; any other state has them stripped. `results` fills
-`test_failure` (or `ingest_error`/`no_cases`) when no `--result-prop failure_reason=` is given. The
+`failure_log_url` and `failure_wait_s` (whole seconds); any other state has them stripped. `results`
+fills `test_failure` (or `ingest_error`/`no_cases`) when no `--result-prop failure_*=` is given, marked
+`failure_confidence=1` so any later collector outranks it. The
 verdict is write-once, so a repeat that carries a reason writes it to `artifact_result_reasons`
 instead; `v_artifact_results_enriched` resolves the two, plus the older `diagnosis`/`closed_reason`
 props, into its `failure_*` columns.

@@ -135,7 +135,7 @@ SELECT
     if(failure_reason = '', '',
        if(coalesce(x.x_conf, 0) > r.own_conf, x.x_subreason, r.own_subreason)) AS failure_subreason,
     if(failure_reason = '', '',
-       substring(multiIf(coalesce(x.x_conf, 0) > r.own_conf, x.x_detail,
+       substringUTF8(multiIf(coalesce(x.x_conf, 0) > r.own_conf, x.x_detail,
                          r.own_detail != '', r.own_detail,
                          failed + errors > 0,
                          concat(toString(failed + errors), ' of ', toString(total_tests), ' cases failed'),
@@ -150,14 +150,14 @@ SELECT
     startsWith(failure_reason, 'infra_') AS failure_is_infra,
     multiIf(failure_reason = '', '',
             coalesce(x.x_conf, 0) > r.own_conf, x.x_source,
-            r.own_reason != '', 'writer',
+            r.own_conf >= 2, 'writer',
             'derived') AS failure_source
 FROM
 (
     -- One row per verdict, the latest: a leg writes a 'running' seed before its final state and a
     -- re-push repeats it, so raw rows count a run's counters twice. A run can hold a functional
     -- and a capability verdict for one artifact, hence result_kind/test_type in the key.
-    -- own_*: the reason the verdict row itself carries -- props.failure_* (3), else the stale-leg
+    -- own_*: the reason the verdict row itself carries -- props.failure_* (3, or its failure_confidence), else the stale-leg
     -- cleanup's closed_reason, a dead runner or diagnose_failure's category (2). closed_reason only
     -- explains an 'error' close: on 'failed' it says why the row was missing, not why it failed.
     SELECT
@@ -170,7 +170,7 @@ FROM
                 state = 'error' AND props['closed_reason'] = 'parent_groovy_compile_error', 'pipeline_error',
                 state = 'error' AND props['closed_reason'] = 'ch_write_timeout', 'ingest_error',
                 state = 'error' AND props['closed_reason'] = 'parent_hung_jenkins_restart', 'infra_capacity',
-                props['runner_died'] = '1', 'infra_capacity',
+                props['runner_died'] IN ('1', 'true'), 'infra_capacity',
                 -- the pre-taxonomy spelling of ingest_error/result_lost
                 dg_cat = 'infra_result_lost', 'ingest_error',
                 dg_cat NOT IN ('', 'unknown'), dg_cat,
@@ -181,7 +181,7 @@ FROM
                 state = 'error' AND props['closed_reason'] = 'parent_groovy_compile_error', 'groovy_compile',
                 state = 'error' AND props['closed_reason'] = 'ch_write_timeout', 'ch_write_timeout',
                 state = 'error' AND props['closed_reason'] = 'parent_hung_jenkins_restart', 'jenkins_restart',
-                props['runner_died'] = '1', 'runner_died',
+                props['runner_died'] IN ('1', 'true'), 'runner_died',
                 dg_cat = 'infra_result_lost', 'result_lost',
                 '') AS own_subreason,
         multiIf(props['failure_reason'] != '', props['failure_detail'],
@@ -191,27 +191,47 @@ FROM
                    JSONExtractString(props['diagnosis'], 'why')),
                 state = 'error', props['closed_reason'],
                 '') AS own_detail,
-        toUInt8(multiIf(props['failure_reason'] != '', 3, own_reason != '', 2, 0)) AS own_conf
+        -- A writer's props rank 3 unless it marked them a default (results' failure_confidence=1).
+        toUInt8(multiIf(props['failure_reason'] != '', toUInt8OrDefault(props['failure_confidence'], toUInt8(3)),
+                        own_reason != '', 2, 0)) AS own_conf
     FROM artifact_results
     ORDER BY ts DESC, audit_timestamp DESC
     LIMIT 1 BY artifact_id, run_id, result_kind, test_type
 ) AS r
 LEFT JOIN v_artifacts AS a ON a.artifact_id = r.artifact_id
 LEFT JOIN (
-    -- The best reasons row per verdict: highest confidence, then latest.
+    -- The best reasons row per verdict: each source's latest (so an unmerged older row cannot
+    -- win), then the highest confidence across sources.
     SELECT
         artifact_id,
         run_id,
         result_kind,
         test_type,
-        max(confidence)                                     AS x_conf,
-        argMax(failure_reason,    (confidence, updated_at)) AS x_reason,
-        argMax(failure_subreason, (confidence, updated_at)) AS x_subreason,
-        argMax(failure_detail,    (confidence, updated_at)) AS x_detail,
-        argMax(failure_log_url,   (confidence, updated_at)) AS x_log_url,
-        argMax(failure_wait_s,    (confidence, updated_at)) AS x_wait_s,
-        argMax(source,            (confidence, updated_at)) AS x_source
-    FROM artifact_result_reasons
+        max(s_conf)                                    AS x_conf,
+        argMax(s_reason,    (s_conf, s_updated_at))    AS x_reason,
+        argMax(s_subreason, (s_conf, s_updated_at))    AS x_subreason,
+        argMax(s_detail,    (s_conf, s_updated_at))    AS x_detail,
+        argMax(s_log_url,   (s_conf, s_updated_at))    AS x_log_url,
+        argMax(s_wait_s,    (s_conf, s_updated_at))    AS x_wait_s,
+        argMax(source,      (s_conf, s_updated_at))    AS x_source
+    FROM
+    (
+        SELECT
+            artifact_id,
+            run_id,
+            result_kind,
+            test_type,
+            source,
+            max(updated_at)                           AS s_updated_at,
+            argMax(confidence,        updated_at)     AS s_conf,
+            argMax(failure_reason,    updated_at)     AS s_reason,
+            argMax(failure_subreason, updated_at)     AS s_subreason,
+            argMax(failure_detail,    updated_at)     AS s_detail,
+            argMax(failure_log_url,   updated_at)     AS s_log_url,
+            argMax(failure_wait_s,    updated_at)     AS s_wait_s
+        FROM artifact_result_reasons
+        GROUP BY artifact_id, run_id, result_kind, test_type, source
+    )
     GROUP BY artifact_id, run_id, result_kind, test_type
 ) AS x ON x.artifact_id = r.artifact_id AND x.run_id = r.run_id
       AND x.result_kind = r.result_kind AND x.test_type = r.test_type
@@ -263,7 +283,10 @@ SELECT
     e.failure_reason    AS failure_reason,
     e.failure_subreason AS failure_subreason,
     e.failure_detail    AS failure_detail,
-    e.failure_log_url   AS failure_log_url
+    e.failure_log_url   AS failure_log_url,
+    e.failure_wait_s    AS failure_wait_s,
+    e.failure_is_infra  AS failure_is_infra,
+    e.failure_source    AS failure_source
 FROM v_tag_resolution AS tr
 INNER JOIN v_artifact_results_enriched AS e ON e.artifact_id = tr.artifact_id;
 
