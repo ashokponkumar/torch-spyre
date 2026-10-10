@@ -36,6 +36,7 @@ VERDICTS = {
     "06": ("error", {}),
     "07": ("error", {"failure_reason": "aborted", "failure_subreason": "user"}),
     "08": ("error", {"diagnosis": "infra_result_lost"}),
+    "09": ("error", {"closed_reason": "parent_hung_jenkins_restart"}),
 }
 
 
@@ -127,3 +128,7 @@ def test_the_writers_own_reason_outranks_a_backfill_guess(db):
 
 def test_the_pre_taxonomy_result_lost_reads_as_ingest_error(db):
     assert _why(db, "08") == ("ingest_error", "result_lost", "writer")
+
+
+def test_a_jenkins_restart_reads_as_infra(db):
+    assert _why(db, "09") == ("infra_capacity", "jenkins_restart", "writer")

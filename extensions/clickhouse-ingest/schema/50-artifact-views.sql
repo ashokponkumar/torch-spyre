@@ -168,6 +168,7 @@ FROM
                 props['closed_reason'] = 'parent_manual_abort', 'aborted',
                 props['closed_reason'] = 'parent_groovy_compile_error', 'pipeline_error',
                 props['closed_reason'] = 'ch_write_timeout', 'ingest_error',
+                props['closed_reason'] = 'parent_hung_jenkins_restart', 'infra_capacity',
                 props['runner_died'] = '1', 'infra_capacity',
                 -- the pre-taxonomy spelling of ingest_error/result_lost
                 dg_cat = 'infra_result_lost', 'ingest_error',
@@ -178,6 +179,7 @@ FROM
                 props['closed_reason'] = 'parent_manual_abort', 'user',
                 props['closed_reason'] = 'parent_groovy_compile_error', 'groovy_compile',
                 props['closed_reason'] = 'ch_write_timeout', 'ch_write_timeout',
+                props['closed_reason'] = 'parent_hung_jenkins_restart', 'jenkins_restart',
                 props['runner_died'] = '1', 'runner_died',
                 dg_cat = 'infra_result_lost', 'result_lost',
                 '') AS own_subreason,
