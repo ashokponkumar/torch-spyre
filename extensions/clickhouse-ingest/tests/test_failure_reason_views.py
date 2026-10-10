@@ -37,6 +37,7 @@ VERDICTS = {
     "07": ("error", {"failure_reason": "aborted", "failure_subreason": "user"}),
     "08": ("error", {"diagnosis": "infra_result_lost"}),
     "09": ("error", {"closed_reason": "parent_hung_jenkins_restart"}),
+    "10": ("failed", {"closed_reason": "parent_manual_abort"}),
 }
 
 
@@ -63,7 +64,7 @@ def db():
             + "\n".join(map(json.dumps, rows)))  # fmt: skip
     s.query(
         "INSERT INTO run_case_counters (run_id, component, total_tests, passed, failed) "
-        f"VALUES ('{_rid('03')}', 'torch-spyre', 5, 3, 2)"
+        f"VALUES ('{_rid('03')}', 'torch-spyre', 5, 3, 2), ('{_rid('10')}', 'torch-spyre', 12, 1, 11)"
     )
     reasons = [
         (_rid("06"), "infra_timeout", "card_lock", 2, "backfill-console"),
@@ -132,3 +133,8 @@ def test_the_pre_taxonomy_result_lost_reads_as_ingest_error(db):
 
 def test_a_jenkins_restart_reads_as_infra(db):
     assert _why(db, "09") == ("infra_capacity", "jenkins_restart", "writer")
+
+
+def test_a_failed_close_is_explained_by_its_cases_not_the_cleanup(db):
+    assert _why(db, "10") == ("test_failure", "", "derived")
+    assert db["10"]["failure_detail"] == "11 of 12 cases failed"

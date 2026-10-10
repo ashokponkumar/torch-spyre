@@ -158,28 +158,29 @@ FROM
     -- re-push repeats it, so raw rows count a run's counters twice. A run can hold a functional
     -- and a capability verdict for one artifact, hence result_kind/test_type in the key.
     -- own_*: the reason the verdict row itself carries -- props.failure_* (3), else the stale-leg
-    -- cleanup's closed_reason, a dead runner or diagnose_failure's category (2).
+    -- cleanup's closed_reason, a dead runner or diagnose_failure's category (2). closed_reason only
+    -- explains an 'error' close: on 'failed' it says why the row was missing, not why it failed.
     SELECT
         *,
         if(startsWith(props['diagnosis'], '{'),
            JSONExtractString(props['diagnosis'], 'category'), props['diagnosis']) AS dg_cat,
         multiIf(props['failure_reason'] != '', props['failure_reason'],
-                startsWith(props['closed_reason'], 'parent_superseded'), 'superseded',
-                props['closed_reason'] = 'parent_manual_abort', 'aborted',
-                props['closed_reason'] = 'parent_groovy_compile_error', 'pipeline_error',
-                props['closed_reason'] = 'ch_write_timeout', 'ingest_error',
-                props['closed_reason'] = 'parent_hung_jenkins_restart', 'infra_capacity',
+                state = 'error' AND startsWith(props['closed_reason'], 'parent_superseded'), 'superseded',
+                state = 'error' AND props['closed_reason'] = 'parent_manual_abort', 'aborted',
+                state = 'error' AND props['closed_reason'] = 'parent_groovy_compile_error', 'pipeline_error',
+                state = 'error' AND props['closed_reason'] = 'ch_write_timeout', 'ingest_error',
+                state = 'error' AND props['closed_reason'] = 'parent_hung_jenkins_restart', 'infra_capacity',
                 props['runner_died'] = '1', 'infra_capacity',
                 -- the pre-taxonomy spelling of ingest_error/result_lost
                 dg_cat = 'infra_result_lost', 'ingest_error',
                 dg_cat NOT IN ('', 'unknown'), dg_cat,
                 '') AS own_reason,
         multiIf(props['failure_reason'] != '', props['failure_subreason'],
-                startsWith(props['closed_reason'], 'parent_superseded'), 'by_newer_run',
-                props['closed_reason'] = 'parent_manual_abort', 'user',
-                props['closed_reason'] = 'parent_groovy_compile_error', 'groovy_compile',
-                props['closed_reason'] = 'ch_write_timeout', 'ch_write_timeout',
-                props['closed_reason'] = 'parent_hung_jenkins_restart', 'jenkins_restart',
+                state = 'error' AND startsWith(props['closed_reason'], 'parent_superseded'), 'by_newer_run',
+                state = 'error' AND props['closed_reason'] = 'parent_manual_abort', 'user',
+                state = 'error' AND props['closed_reason'] = 'parent_groovy_compile_error', 'groovy_compile',
+                state = 'error' AND props['closed_reason'] = 'ch_write_timeout', 'ch_write_timeout',
+                state = 'error' AND props['closed_reason'] = 'parent_hung_jenkins_restart', 'jenkins_restart',
                 props['runner_died'] = '1', 'runner_died',
                 dg_cat = 'infra_result_lost', 'result_lost',
                 '') AS own_subreason,
@@ -188,7 +189,8 @@ FROM
                 if(JSONExtractString(props['diagnosis'], 'evidence') != '',
                    JSONExtractString(props['diagnosis'], 'evidence'),
                    JSONExtractString(props['diagnosis'], 'why')),
-                props['closed_reason']) AS own_detail,
+                state = 'error', props['closed_reason'],
+                '') AS own_detail,
         toUInt8(multiIf(props['failure_reason'] != '', 3, own_reason != '', 2, 0)) AS own_conf
     FROM artifact_results
     ORDER BY ts DESC, audit_timestamp DESC
