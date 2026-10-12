@@ -125,7 +125,7 @@ from torch_spyre._inductor.constants import (
 )
 
 from torch_spyre._inductor import config
-from torch_spyre._inductor.logging_utils import get_inductor_logger
+from torch_spyre._inductor.logging_utils import get_inductor_logger, warn_once
 from torch_spyre._inductor.loop_info import (
     CarriedReductionRecord,
     LoopCarryRecord,
@@ -4726,7 +4726,11 @@ def _make_cpsat_solver(
 
         return CpSatLayoutSolver(buffers, size)
     except ImportError as exc:
-        logger.warning(
+        # Once per process: this factory runs for every allocation, so a missing
+        # ortools otherwise repeats the same warning millions of times.
+        warn_once(
+            logger,
+            "cpsat_unavailable",
             "cpsat layout solver unavailable (%s); falling back to the "
             "default greedy allocator.",
             exc,
