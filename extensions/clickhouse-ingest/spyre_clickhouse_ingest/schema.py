@@ -818,6 +818,59 @@ class DispatchTargets(Table):
     required = ("published_at",)
 
 
+CREDENTIAL_STATE_VALUES = frozenset({"bound", "unbound", "gone"})
+PROBE_STATUS_VALUES = frozenset({"ok", "failing", "unknown"})
+PROBE_SITE_VALUES = frozenset({"jenkins", "gha", "dashboard", "cluster"})
+
+
+class CredentialInventory(Table):
+    """What discovery found per credential; the latest observed_at wins."""
+
+    name = "credential_inventory"
+    columns = (
+        "system",
+        "scope",
+        "credential_id",
+        "kind",
+        "description",
+        "owner",
+        "consumers",
+        "state",
+        "source_created_at",
+        "source_updated_at",
+        "last_bound_at",
+        "observed_at",
+        "job_run",
+        "props",
+    )
+    required = ("system", "scope", "credential_id", "observed_at")
+    enums = (("state", CREDENTIAL_STATE_VALUES),)
+
+
+class CredentialProbes(Table):
+    """One probe of one credential, written by the site that holds the secret."""
+
+    name = "credential_probes"
+    columns = (
+        "system",
+        "scope",
+        "credential_id",
+        "probe_site",
+        "probe",
+        "status",
+        "error_class",
+        "http_status",
+        "latency_ms",
+        "expires_at",
+        "fingerprint",
+        "detail",
+        "job_run",
+        "props",
+    )
+    required = ("system", "scope", "credential_id", "probe")
+    enums = (("status", PROBE_STATUS_VALUES), ("probe_site", PROBE_SITE_VALUES))
+
+
 # Constant API, kept so installed consumers name one table model rather than copying it.
 TEST_CASES = TestCases
 TEST_CASE_RUNS = TestCaseRuns
@@ -836,6 +889,8 @@ ARTIFACT_SUBSCRIPTIONS = ArtifactSubscriptions
 DISPATCH_REQUESTS = DispatchRequests
 ARTIFACT_DISPATCHES = ArtifactDispatches
 DISPATCH_TARGETS = DispatchTargets
+CREDENTIAL_INVENTORY = CredentialInventory
+CREDENTIAL_PROBES = CredentialProbes
 
 TABLES = {
     t.name: t
@@ -857,6 +912,8 @@ TABLES = {
         DispatchRequests,
         ArtifactDispatches,
         DispatchTargets,
+        CredentialInventory,
+        CredentialProbes,
     )
 }
 
