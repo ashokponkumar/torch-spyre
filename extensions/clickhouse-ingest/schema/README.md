@@ -35,6 +35,7 @@ Applying them in filename order works from an empty database.
 | `59-delegation-views.sql` | `v_delegation_grants_current`, `v_delegation_usage` | 44 |
 | `60-benchmark-views.sql` | 5 `v_benchmark_*` views | 20, 30, 50 |
 | `62-benchmark-verdicts.sql` | `benchmark_metric_policy`, `v_benchmark_metric_verdicts`, `v_benchmark_gate`, `benchmark_metric_verdicts` + its refreshable MV | 60 |
+| `64-slo-views.sql` | `v_slo_targets`, `v_slo_pr_verdict_daily`, `v_slo_main_green_daily`, `v_slo_ingest_freshness`, `v_slo_incident_response`, `v_slo_error_budget` | 47, 48, 54, 57 |
 | `70-vllm-hud-projection.sql` | `oss_ci_benchmark_v3`, `oss_ci_benchmark_metadata`, their `_by_tag` copies + their MVs | 30, 60 |
 
 The `50`/`51`/`52` split is by what a view reads, not by taste: the artifact and functional view
