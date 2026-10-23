@@ -18,7 +18,7 @@ import json
 import subprocess
 
 import pytest
-from spyre_clickhouse_ingest import gha_logs
+from spyre_clickhouse_ingest import gha_logs, paging
 
 
 class FakeCompleted:
@@ -181,9 +181,9 @@ def test_list_jobs_last_size_keeps_the_long_backoff_then_aborts(monkeypatch, tmp
     with pytest.raises(SystemExit) as stopped:
         gha_logs.list_jobs("o/r", "1", tmp_path / "jobs.jsonl")
     assert stopped.value.code == 1
-    assert calls.count(10) == gha_logs.LAST_SIZE_ATTEMPTS
-    for size in gha_logs.JOB_PAGE_SIZES[:-1]:
-        assert calls.count(size) == gha_logs.STEP_ATTEMPTS
+    assert calls.count(10) == paging.LAST_SIZE_ATTEMPTS
+    for size in paging.JOB_PAGE_SIZES[:-1]:
+        assert calls.count(size) == paging.STEP_ATTEMPTS
     assert not (tmp_path / "jobs.jsonl").exists()
 
 
@@ -193,7 +193,7 @@ def test_list_jobs_does_not_retry_a_404_at_any_size(monkeypatch, tmp_path):
     )
     with pytest.raises(SystemExit):
         gha_logs.list_jobs("o/r", "1", tmp_path / "jobs.jsonl")
-    assert len(calls) == len(gha_logs.JOB_PAGE_SIZES)
+    assert len(calls) == len(paging.JOB_PAGE_SIZES)
 
 
 def test_list_jobs_asks_for_the_latest_attempt_with_get(monkeypatch, tmp_path):

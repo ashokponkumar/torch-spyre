@@ -23,13 +23,13 @@ from pathlib import Path
 
 import regex as re
 
+from .paging import (
+    JOB_PAGE_SIZES,
+    ListingFailed,
+    at_smaller_pages,
+)
+
 TRANSIENT_HTTP_CODES = ("502", "503", "504")
-# GitHub answers 502 when it cannot build a big page of a many-job run in time, however often
-# it is asked; the same listing at a smaller size succeeds. Sizes are tried in order.
-JOB_PAGE_SIZES = (100, 50, 25, 10)
-# The last size keeps the long backoff (about 2 minutes): a 502 spell can outlast 30 s.
-LAST_SIZE_ATTEMPTS = 7
-STEP_ATTEMPTS = 2
 
 
 class GhCli:
@@ -87,9 +87,9 @@ class JobLogs:
         one, so pages of different sizes are never combined. name_prefix keeps only matching
         jobs and is dropped from their names.
         """
-        last = ""
-        for i, size in enumerate(sizes):
-            result = run_with_retry(
+
+        def fetch(size, attempts):
+            result = GhCli.run_with_retry(
                 [
                     "gh",
                     "api",
@@ -104,15 +104,21 @@ class JobLogs:
                     "--jq",
                     ".jobs[] | {id: .id, name: .name}",
                 ],
-                max_attempts=LAST_SIZE_ATTEMPTS
-                if i == len(sizes) - 1
-                else STEP_ATTEMPTS,
+                max_attempts=attempts,
             )
-            if result.returncode == 0:
-                break
-            last = result.stderr.decode("utf-8", "replace").strip()
-            print(f"[warn] listing jobs at per_page={size} failed: {last}")
-        else:
+            if result.returncode != 0:
+                raise ListingFailed(result.stderr.decode("utf-8", "replace").strip())
+            return result
+
+        try:
+            result = at_smaller_pages(
+                fetch,
+                sizes,
+                on_failure=lambda size, err: print(
+                    f"[warn] listing jobs at per_page={size} failed: {err}"
+                ),
+            )
+        except ListingFailed:
             print(f"::error::listing jobs of run {run_id} failed at every page size")
             sys.exit(1)
         jobs = [
