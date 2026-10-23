@@ -149,6 +149,12 @@ class Sandbox:
             "(session_id, step, ts)",
         ),
         ("analyst_memory", "1", "(memory_id, updated_at)"),
+        ("delegation_grants", "1", "(grant_id, created_at)"),
+        (
+            "delegation_grant_events",
+            "ts >= now() - INTERVAL {days} DAY",
+            "(grant_id, ts)",
+        ),
     )
 
     @classmethod
