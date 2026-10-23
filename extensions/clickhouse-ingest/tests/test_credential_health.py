@@ -7,6 +7,7 @@ import pytest
 
 from spyre_clickhouse_ingest.schema import (
     CREDENTIAL_INVENTORY,
+    CREDENTIAL_OWNERS,
     CREDENTIAL_PROBES,
     SchemaError,
     TABLES,
@@ -31,7 +32,9 @@ def _ddl_columns(table: str) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "model", [CREDENTIAL_INVENTORY, CREDENTIAL_PROBES], ids=lambda m: m.name
+    "model",
+    [CREDENTIAL_INVENTORY, CREDENTIAL_PROBES, CREDENTIAL_OWNERS],
+    ids=lambda m: m.name,
 )
 def test_model_columns_are_the_ddl_columns(model):
     # `ts`, `audit_uuid` and `audit_timestamp` are server defaults, never inserted.
@@ -113,3 +116,33 @@ def test_failing_wins_over_expiry_in_the_health_class():
     # Result labels end their line; the same words inside a condition do not.
     order = re.findall(r"'(\w+)',?\s*$", block, re.M)
     assert order == ["unprobed", "failing", "expired", "expiring", "ok", "unknown"]
+
+
+def test_owner_edits_never_live_in_the_table_discovery_rewrites():
+    # Discovery replaces credential_inventory rows every run, so a human-entered owner there
+    # would be erased within the hour.
+    assert "owner" not in CREDENTIAL_INVENTORY.columns
+    assert (
+        "owner" in CREDENTIAL_OWNERS.columns
+        and "linked_email" in CREDENTIAL_OWNERS.columns
+    )
+
+
+def test_owner_row_needs_an_author_and_a_time():
+    row = {c: "" for c in CREDENTIAL_OWNERS.columns}
+    row.update(
+        system="jenkins",
+        scope="system",
+        credential_id="x",
+        rotation_days=0,
+        last_rotated_at=None,
+        props={},
+        updated_at="2026-10-23 00:00:00.000",
+    )
+    with pytest.raises(SchemaError, match="updated_by"):
+        CREDENTIAL_OWNERS.row(row)
+    CREDENTIAL_OWNERS.row({**row, "updated_by": "someone@example.com"})
+
+
+def test_view_takes_the_newest_owner_row_per_credential():
+    assert "argMax(owner, updated_at)" in VIEW and "FROM credential_owners" in VIEW

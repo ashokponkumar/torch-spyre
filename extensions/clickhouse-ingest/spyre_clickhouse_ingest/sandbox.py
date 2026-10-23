@@ -137,6 +137,11 @@ class Sandbox:
             "ts >= now() - INTERVAL {days} DAY",
             "(credential_id, ts)",
         ),
+        (
+            "credential_owners",
+            "1",
+            "(system, scope, credential_id, updated_at)",
+        ),
     )
 
     @classmethod

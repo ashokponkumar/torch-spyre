@@ -833,7 +833,6 @@ class CredentialInventory(Table):
         "credential_id",
         "kind",
         "description",
-        "owner",
         "consumers",
         "state",
         "source_created_at",
@@ -871,6 +870,31 @@ class CredentialProbes(Table):
     enums = (("status", PROBE_STATUS_VALUES), ("probe_site", PROBE_SITE_VALUES))
 
 
+class CredentialOwners(Table):
+    """What a person supplies about a credential; append-only, the newest row per credential wins."""
+
+    name = "credential_owners"
+    columns = (
+        "system",
+        "scope",
+        "credential_id",
+        "owner",
+        "owner_email",
+        "backup_owner",
+        "linked_identity",
+        "linked_email",
+        "issuer",
+        "rotation_days",
+        "last_rotated_at",
+        "runbook_url",
+        "notes",
+        "updated_at",
+        "updated_by",
+        "props",
+    )
+    required = ("system", "scope", "credential_id", "updated_at", "updated_by")
+
+
 # Constant API, kept so installed consumers name one table model rather than copying it.
 TEST_CASES = TestCases
 TEST_CASE_RUNS = TestCaseRuns
@@ -891,6 +915,7 @@ ARTIFACT_DISPATCHES = ArtifactDispatches
 DISPATCH_TARGETS = DispatchTargets
 CREDENTIAL_INVENTORY = CredentialInventory
 CREDENTIAL_PROBES = CredentialProbes
+CREDENTIAL_OWNERS = CredentialOwners
 
 TABLES = {
     t.name: t
@@ -914,6 +939,7 @@ TABLES = {
         DispatchTargets,
         CredentialInventory,
         CredentialProbes,
+        CredentialOwners,
     )
 }
 

@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS credential_inventory
     credential_id     String,
     kind              LowCardinality(String) DEFAULT '',  -- the store's own type name
     description       String DEFAULT '',
-    owner             String DEFAULT '',
     consumers         Array(String),            -- jobs / workflows / workloads that bind it
     state             LowCardinality(String),   -- bound | unbound | gone
     source_created_at Nullable(DateTime64(3, 'UTC')),  -- first use (Jenkins) or creation (k8s)
@@ -62,3 +61,31 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (system, scope, credential_id, ts)
 -- Samples are hourly at most; a year shows rotation cadence.
 TTL ts + INTERVAL 365 DAY;
+
+-- What a person supplies and nothing can discover: who to ask, where the credential is issued, and
+-- the mailbox behind it. Append-only, so the table is also the change history. Separate from
+-- credential_inventory because discovery rewrites that table every hour and would erase an edit.
+CREATE TABLE IF NOT EXISTS credential_owners
+(
+    system          LowCardinality(String),
+    scope           String,
+    credential_id   String,
+    owner           String DEFAULT '',   -- person or team to ask
+    owner_email     String DEFAULT '',   -- where a rotation request goes
+    backup_owner    String DEFAULT '',
+    linked_identity String DEFAULT '',   -- the account it is issued under: functional ID, bot, user
+    linked_email    String DEFAULT '',   -- that account's mailbox
+    issuer          String DEFAULT '',   -- where it is rotated: Artifactory, IBM Cloud IAM, GHE ...
+    rotation_days   UInt16 DEFAULT 0,    -- expected rotation interval; 0 = unknown
+    last_rotated_at Nullable(DateTime64(3, 'UTC')),  -- as stated by the editor
+    runbook_url     String DEFAULT '',
+    notes           String DEFAULT '',
+    updated_at      DateTime64(3, 'UTC'),
+    updated_by      String,
+
+    props           Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree()
+ORDER BY (system, scope, credential_id, updated_at);

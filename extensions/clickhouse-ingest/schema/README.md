@@ -16,7 +16,7 @@ Applying them in filename order works from an empty database.
 | `26-dispatch-targets.sql` | `dispatch_targets` | — |
 | `30-benchmarks.sql` | `benchmarks`, `benchmark_runs` | — |
 | `40-jenkins-agents.sql` | `jenkins_agents` | — |
-| `41-credential-health.sql` | `credential_inventory`, `credential_probes` | — |
+| `41-credential-health.sql` | `credential_inventory`, `credential_probes`, `credential_owners` | — |
 | `47-pipeline-runs.sql` | `pipeline_runs`, `pipeline_run_legs` | — |
 | `48-ci-run-timings.sql` | `ci_run_timings` | — |
 | `49-result-uploads.sql` | `result_uploads`, `v_result_uploads`, `v_artifact_results_published` | 20 |
