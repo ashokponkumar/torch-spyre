@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from spyre_clickhouse_ingest import gha_runs
+from spyre_clickhouse_ingest import gha_runs, paging
 from spyre_clickhouse_ingest.schema import PipelineRuns
 
 REPO = "torch-spyre/torch-spyre"
@@ -692,7 +692,7 @@ def test_jobs_steps_the_page_size_down_when_github_answers_502(monkeypatch):
     assert [j["id"] for j in jobs] == list(range(203))
     assert {s for s, _ in seen} == {100, 50}
     # 100 is tried JOB_TRIES times, then 50 serves every page.
-    assert seen[: gha_runs.JOB_TRIES] == [(100, 1)] * gha_runs.JOB_TRIES
+    assert seen[: paging.STEP_ATTEMPTS] == [(100, 1)] * paging.STEP_ATTEMPTS
     assert [p for s, p in seen if s == 50] == [1, 2, 3, 4, 5]
 
 
@@ -716,9 +716,9 @@ def test_the_last_size_gets_the_full_retries_then_the_run_is_unavailable(monkeyp
     with pytest.raises(gha_runs.Unavailable):
         gha_runs.GitHub("t").jobs("o/r", 1, 2)
     sizes = [s for s, _ in seen]
-    assert sizes.count(gha_runs.JOB_PAGES[-1]) == gha_runs.RETRIES
-    for size in gha_runs.JOB_PAGES[:-1]:
-        assert sizes.count(size) == gha_runs.JOB_TRIES
+    assert sizes.count(paging.JOB_PAGE_SIZES[-1]) == gha_runs.RETRIES
+    for size in paging.JOB_PAGE_SIZES[:-1]:
+        assert sizes.count(size) == paging.STEP_ATTEMPTS
 
 
 def test_a_client_error_is_not_retried_at_any_size(monkeypatch):

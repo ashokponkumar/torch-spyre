@@ -48,6 +48,7 @@ from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from .paging import at_smaller_pages
 from .schema import PipelineRuns
 
 API = "https://api.github.com"
@@ -55,11 +56,6 @@ API = "https://api.github.com"
 LIST_CAP = 1000
 PAGE = 100
 RETRIES = 6
-# GitHub answers 502 when it cannot build a big page of a many-job run in time, however often it
-# is asked; the same listing at a smaller size succeeds. Sizes are tried in order, the last with
-# the full retries.
-JOB_PAGES = (100, 50, 25, 10)
-JOB_TRIES = 2
 # Exit status of a poll that stopped early with more to do: at its deadline or an expired token
 # (a caller may continue at once), or at the rate reserve (wait for a later run). 0 = done.
 EXIT_MORE = 3
@@ -423,14 +419,11 @@ class GitHub:
 
     def jobs(self, repo: str, run_id: int, attempt: int) -> list[dict[str, Any]]:
         path = f"/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs"
-        for i, size in enumerate(JOB_PAGES):
-            last = i == len(JOB_PAGES) - 1
-            try:
-                return self._listing(path, size, RETRIES if last else JOB_TRIES)
-            except Unavailable:
-                if last:
-                    raise
-        raise AssertionError("JOB_PAGES is empty")
+        return at_smaller_pages(
+            lambda size, tries: self._listing(path, size, tries),
+            last_attempts=RETRIES,
+            failed=(Unavailable,),
+        )
 
     def _listing(self, path: str, size: int, tries: int) -> list[dict[str, Any]]:
         """Every job at one page size, from page 1: a partial listing never carries over to another size."""
