@@ -131,6 +131,12 @@ class Sandbox:
             "published_at >= now() - INTERVAL {days} DAY",
             "(published_at, target_type, target_prefix)",
         ),
+        (
+            "incident_events",
+            "ts >= now() - INTERVAL {days} DAY",
+            "(source, subject, ts)",
+        ),
+        ("incident_log", "1", "(incident_id, updated_at)"),
     )
 
     @classmethod

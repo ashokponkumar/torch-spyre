@@ -818,6 +818,88 @@ class DispatchTargets(Table):
     required = ("published_at",)
 
 
+INCIDENT_SEVERITY_VALUES = frozenset({"info", "warning", "critical"})
+INCIDENT_STATE_VALUES = frozenset(
+    {"open", "acknowledged", "mitigated", "resolved", "dismissed"}
+)
+INCIDENT_ACTOR_VALUES = frozenset({"system", "agent", "ask_spyre", "human"})
+INCIDENT_CAUSE_VALUES = frozenset(
+    {
+        "credentials",
+        "resources",
+        "network",
+        "hardware",
+        "upstream",
+        "pipeline",
+        "data",
+        "unknown",
+    }
+)
+
+
+class IncidentEvents(Table):
+    """One normalized signal from any alert source; the router attaches it to an incident."""
+
+    name = "incident_events"
+    columns = (
+        "ts",
+        "source",
+        "subject",
+        "severity",
+        "signature",
+        "cause_class",
+        "summary",
+        "evidence_url",
+        "dedup_key",
+        "incident_id",
+        "job_run",
+        "props",
+    )
+    required = ("source", "subject", "severity")
+    enums = (
+        ("severity", INCIDENT_SEVERITY_VALUES),
+        ("cause_class", INCIDENT_CAUSE_VALUES),
+    )
+
+
+class IncidentLog(Table):
+    """Append-only incident timeline; the newest row per incident is its current state."""
+
+    name = "incident_log"
+    columns = (
+        "incident_id",
+        "updated_at",
+        "updated_by",
+        "actor_kind",
+        "state",
+        "severity",
+        "title",
+        "cause_class",
+        "signature",
+        "owner",
+        "owner_email",
+        "action",
+        "note",
+        "thread_url",
+        "evidence_url",
+        "props",
+    )
+    required = (
+        "incident_id",
+        "updated_at",
+        "updated_by",
+        "actor_kind",
+        "state",
+        "severity",
+    )
+    enums = (
+        ("actor_kind", INCIDENT_ACTOR_VALUES),
+        ("state", INCIDENT_STATE_VALUES),
+        ("severity", INCIDENT_SEVERITY_VALUES),
+        ("cause_class", INCIDENT_CAUSE_VALUES),
+    )
+
+
 # Constant API, kept so installed consumers name one table model rather than copying it.
 TEST_CASES = TestCases
 TEST_CASE_RUNS = TestCaseRuns
@@ -836,6 +918,8 @@ ARTIFACT_SUBSCRIPTIONS = ArtifactSubscriptions
 DISPATCH_REQUESTS = DispatchRequests
 ARTIFACT_DISPATCHES = ArtifactDispatches
 DISPATCH_TARGETS = DispatchTargets
+INCIDENT_EVENTS = IncidentEvents
+INCIDENT_LOG = IncidentLog
 
 TABLES = {
     t.name: t
@@ -857,6 +941,8 @@ TABLES = {
         DispatchRequests,
         ArtifactDispatches,
         DispatchTargets,
+        IncidentEvents,
+        IncidentLog,
     )
 }
 
