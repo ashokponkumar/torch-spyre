@@ -371,17 +371,79 @@ def test_ratios_are_guarded_against_division_by_zero():
 def test_quorum_order_unknown_then_operational_then_the_failure_cases():
     block = VIEWS["65-status-views.sql"]
     block = block[block.index("multiIf(") : block.index(") AS state")]
-    labels = re.findall(r"'(\w+)',?\s*$", block, re.M)
-    assert labels[:2] == ["unknown", "operational"]
-    assert set(labels) == {
+    lines = [ln.strip() for ln in block.splitlines()[1:] if ln.strip()]
+    # each condition line, in order: nothing reported is unknown before anything else, a clean run is
+    # operational before any failure is looked at, and the quorum arms follow
+    assert lines[0].startswith("a.reporting = 0,") and lines[0].endswith("'unknown',")
+    assert lines[1].startswith("a.failing = 0 AND a.slow = 0,") and lines[1].endswith(
+        "'operational',"
+    )
+    assert lines[2].startswith("a.failing = 0,") and lines[2].endswith("'degraded',")
+    assert lines[-1] == "'partial_outage'"
+    for state in (
         "unknown",
         "operational",
         "degraded",
         "major_outage",
         "partial_outage",
-    }
-    # two vantages failing together is only a major outage after two buckets in a row
-    assert "both_failed_buckets, 0) >= 2, 'major_outage', 'partial_outage'" in block
+    ):
+        assert f"'{state}'" in block
+
+
+def test_the_daily_down_rule_mirrors_the_current_quorum_rule():
+    text = VIEWS["65-status-views.sql"]
+    daily = text[text.index("EXISTS v_status_daily") :]
+    # 2 vantages: down only when both fail. 3 or more: down at half or more. 1 vantage: only on the 3rd bucket in a row.
+    assert (
+        "(n_known = 2 AND n_fail = 2) OR (n_known >= 3 AND n_fail * 2 >= n_known)"
+        in daily
+    )
+    assert "OR (one_fail AND one_fail_run = 3)" in daily
+    assert "RANGE BETWEEN 600 PRECEDING AND CURRENT ROW" in daily
+    current = text[
+        text.index("EXISTS v_status_current") : text.index("EXISTS v_status_daily")
+    ]
+    assert "a.failing * 2 < a.reporting" in current
+    assert "a.reporting = 2 AND a.failing = 1" in current
+
+
+def test_a_major_outage_needs_two_buckets_and_a_single_vantage_three():
+    current = VIEWS["65-status-views.sql"]
+    current = current[
+        current.index("EXISTS v_status_current") : current.index(
+            "EXISTS v_status_daily"
+        )
+    ]
+    assert "if(r.all_fail_pair, 'major_outage', 'partial_outage')" in current
+    assert "if(r.one_fail_triple, 'partial_outage', 'degraded')" in current
+    assert "(all0 AND all1) OR (all1 AND all2)" in current
+    assert "(one0 AND one1 AND one2) OR (one1 AND one2 AND one3)" in current
+
+
+def test_only_live_vantages_count_towards_the_quorum():
+    text = VIEWS["65-status-views.sql"]
+    assert text.count("AND v_alive") >= 5
+    assert "AND vantage_alive" in text
+
+
+def test_the_signature_key_keeps_two_signatures_on_one_failure_apart():
+    text = VIEWS["67-feedback-views.sql"]
+    assert "GROUP BY target_type, target_id, signature_id, actor, signal" in text
+    assert "GROUP BY target_type, target_id, signature_id;" in text
+
+
+def test_only_explicit_votes_and_reactions_are_verdicts_and_disputes_are_left_out():
+    text = VIEWS["67-feedback-views.sql"]
+    assert text.count("cur_source IN ('explicit', 'reaction')") >= 3
+    assert "countIf(human_up > 0 AND human_down = 0)" in text
+    assert "countIf(human_down > 0 AND human_up = 0)" in text
+    assert "countIf(human_up > 0 AND human_down > 0)" in text
+    assert "countIf(cur_source = 'implicit'" in text
+
+
+def test_an_event_past_its_end_is_not_open_whatever_its_status():
+    text = VIEWS["66-external-feed-views.sql"]
+    assert "(cur_ends IS NULL OR cur_ends > now64(3)) AS is_open" in text
 
 
 def test_only_the_view_files_define_views_and_only_the_table_files_define_tables():

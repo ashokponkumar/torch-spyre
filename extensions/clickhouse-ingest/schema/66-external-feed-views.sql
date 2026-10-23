@@ -1,6 +1,7 @@
 -- External events as one row per event, however many vantages saw it. Feed text is untrusted and is
 -- shown, not interpreted; the only fields that drive anything are kind, status, impact, starts_at,
--- ends_at and our own `component`.
+-- ends_at and our own `component`. An event whose end time has passed is not open, whatever its
+-- last reported status: a feed that never marks a window completed must not keep it on the page.
 
 -- One row per vantage first, then per event. Aggregates are named v_* and cur_* because an alias
 -- equal to a source column is substituted into the other aggregates (ILLEGAL_AGGREGATION), and an
@@ -45,7 +46,7 @@ SELECT
     argMax(v_url, v_last_seen)          AS cur_url,
     distinct_versions > 1               AS vantages_disagree,
     cur_kind = 'maintenance' AND cur_status = 'scheduled' AND cur_starts IS NOT NULL AND cur_starts > now64(3) AS is_upcoming_maintenance,
-    cur_status NOT IN ('resolved', 'completed', 'cancelled') AS is_open
+    cur_status NOT IN ('resolved', 'completed', 'cancelled') AND (cur_ends IS NULL OR cur_ends > now64(3)) AS is_open
 FROM per_vantage
 GROUP BY event_id;
 
