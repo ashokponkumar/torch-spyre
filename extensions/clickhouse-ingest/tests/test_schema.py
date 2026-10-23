@@ -359,6 +359,12 @@ def test_registry_covers_exactly_the_v2_tables():
         "analyst_memory",
         "delegation_grants",
         "delegation_grant_events",
+        "status_samples",
+        "status_annotations",
+        "external_feed_fetches",
+        "external_events",
+        "external_reminders",
+        "feedback_signals",
     }
 
 

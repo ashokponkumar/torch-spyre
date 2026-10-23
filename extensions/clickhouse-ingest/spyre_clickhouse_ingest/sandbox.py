@@ -166,6 +166,24 @@ class Sandbox:
             "ts >= now() - INTERVAL {days} DAY",
             "(grant_id, ts)",
         ),
+        ("status_samples", "ts >= now() - INTERVAL {days} DAY", "sample_id"),
+        ("status_annotations", "1", "(annotation_id, ts)"),
+        (
+            "external_feed_fetches",
+            "fetched_at >= now() - INTERVAL {days} DAY",
+            "(source, vantage, fetched_at)",
+        ),
+        (
+            "external_events",
+            "observed_at >= now() - INTERVAL {days} DAY",
+            "(event_id, vantage, observed_at)",
+        ),
+        ("external_reminders", "1", "(reminder_key, sent_at)"),
+        (
+            "feedback_signals",
+            "1",
+            "(target_type, target_id, actor, created_at)",
+        ),
     )
 
     @classmethod
