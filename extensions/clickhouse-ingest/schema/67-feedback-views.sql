@@ -4,34 +4,41 @@
 --   one actor's current signal of a kind on a target counts once, and an actor's weight is capped at 3;
 --   up/affected add, down/not_affected subtract; miss and chip carry no sign and are counted apart.
 
--- The current signal per (target, signature, actor, signal): an actor's repeat is a change of mind, so
--- only the newest counts and the history stays in the table. signature_id is part of the key because
--- one failure can match two signatures and be right about one and wrong about the other; it is ''
--- for every target that is not a signature match.
+-- The current signal per (target, signature, actor, axis). An axis is what a signal is about: up and
+-- down are one axis (a vote), affected and not_affected are one (an outage report), a miss is its
+-- own, and each chip reason is its own. An actor who votes down and later up has changed their
+-- mind, so only the newest on the axis counts and the history stays in the table. signature_id is
+-- in the key because one failure can match two signatures and be right about one and wrong about
+-- the other; it is '' for every target that is not a signature match.
 CREATE VIEW IF NOT EXISTS v_feedback_current AS
 SELECT
-    target_type, target_id, signature_id, actor, signal,
+    target_type, target_id, signature_id, actor,
+    multiIf(signal IN ('up', 'down'), 'vote',
+            signal IN ('affected', 'not_affected'), 'impact',
+            signal = 'chip', concat('chip:', detail),
+            signal)                       AS axis,
+    argMax(signal, created_at)            AS cur_signal,
     argMax(source, created_at)            AS cur_source,
     argMax(detail, created_at)            AS cur_detail,
     argMax(weight_hint, created_at)       AS cur_weight_hint,
     argMax(signature_version, created_at) AS cur_signature_version,
     max(created_at)                       AS cur_at
 FROM feedback_signals
-GROUP BY target_type, target_id, signature_id, actor, signal;
+GROUP BY target_type, target_id, signature_id, actor, axis;
 
 CREATE VIEW IF NOT EXISTS v_feedback_scores AS
 SELECT
     target_type, target_id, signature_id,
     uniqExact(actor)                                                  AS distinct_voters,
-    uniqExactIf(actor, signal IN ('up', 'affected'))                  AS ups,
-    uniqExactIf(actor, signal IN ('down', 'not_affected'))            AS downs,
-    uniqExactIf(actor, signal = 'miss')                               AS misses,
+    uniqExactIf(actor, cur_signal IN ('up', 'affected'))                  AS ups,
+    uniqExactIf(actor, cur_signal IN ('down', 'not_affected'))            AS downs,
+    uniqExactIf(actor, cur_signal = 'miss')                               AS misses,
     round(sumIf(
         least(cur_weight_hint, 3) * exp2(-dateDiff('second', cur_at, now64(3)) / (30 * 86400.)),
-        signal IN ('up', 'affected')), 4)                             AS decayed_up,
+        cur_signal IN ('up', 'affected')), 4)                             AS decayed_up,
     round(sumIf(
         least(cur_weight_hint, 3) * exp2(-dateDiff('second', cur_at, now64(3)) / (30 * 86400.)),
-        signal IN ('down', 'not_affected')), 4)                       AS decayed_down,
+        cur_signal IN ('down', 'not_affected')), 4)                       AS decayed_down,
     round(decayed_up - decayed_down, 4)                               AS score,
     max(cur_at)                                                       AS last_signal_at
 FROM v_feedback_current
@@ -48,11 +55,11 @@ WITH per_match AS
 (
     SELECT
         signature_id, cur_signature_version AS sig_version, target_id,
-        uniqExactIf(actor, signal = 'up'   AND cur_source IN ('explicit', 'reaction')) AS human_up,
-        uniqExactIf(actor, signal = 'down' AND cur_source IN ('explicit', 'reaction')) AS human_down,
-        groupUniqArrayIf(actor, signal IN ('up', 'down') AND cur_source IN ('explicit', 'reaction')) AS who,
-        countIf(cur_source = 'implicit' AND signal IN ('up', 'down'))                  AS implicit_n,
-        countIf(signal = 'miss')                                                       AS miss_n,
+        uniqExactIf(actor, cur_signal = 'up'   AND cur_source IN ('explicit', 'reaction')) AS human_up,
+        uniqExactIf(actor, cur_signal = 'down' AND cur_source IN ('explicit', 'reaction')) AS human_down,
+        groupUniqArrayIf(actor, cur_signal IN ('up', 'down') AND cur_source IN ('explicit', 'reaction')) AS who,
+        countIf(cur_source = 'implicit' AND cur_signal IN ('up', 'down'))                  AS implicit_n,
+        countIf(cur_signal = 'miss')                                                   AS miss_n,
         max(cur_at)                                                                    AS last_at
     FROM v_feedback_current
     WHERE target_type = 'signature_match' AND signature_id != ''

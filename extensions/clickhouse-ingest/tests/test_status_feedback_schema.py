@@ -428,8 +428,18 @@ def test_only_live_vantages_count_towards_the_quorum():
 
 def test_the_signature_key_keeps_two_signatures_on_one_failure_apart():
     text = VIEWS["67-feedback-views.sql"]
-    assert "GROUP BY target_type, target_id, signature_id, actor, signal" in text
+    assert "GROUP BY target_type, target_id, signature_id, actor, axis" in text
     assert "GROUP BY target_type, target_id, signature_id;" in text
+
+
+def test_a_changed_mind_is_one_current_signal_because_up_and_down_share_an_axis():
+    text = VIEWS["67-feedback-views.sql"]
+    assert "multiIf(signal IN ('up', 'down'), 'vote'," in text
+    assert "signal IN ('affected', 'not_affected'), 'impact'," in text
+    assert "argMax(signal, created_at)            AS cur_signal" in text
+    # the scores read the newest signal on an axis, never the raw signal column
+    scores = text[text.index("EXISTS v_feedback_scores") :]
+    assert not re.search(r"(?<!cur_)\bsignal\b\s*(IN|=)", scores)
 
 
 def test_only_explicit_votes_and_reactions_are_verdicts_and_disputes_are_left_out():
