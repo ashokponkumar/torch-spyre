@@ -1072,6 +1072,71 @@ class AnalystMemory(Table):
     enums = (("kind", MEMORY_KIND_VALUES), ("status", MEMORY_STATUS_VALUES))
 
 
+GRANT_EVENT_VALUES = frozenset({"created", "used", "denied", "revoked", "expired"})
+GRANT_RESULT_VALUES = frozenset({"ok", "denied", "error"})
+
+
+class DelegationGrants(Table):
+    """One consented grant; written once, ended by an event or by expires_at, never updated."""
+
+    name = "delegation_grants"
+    columns = (
+        "grant_id",
+        "grantor",
+        "grantee",
+        "tools",
+        "scope_json",
+        "expires_at",
+        "max_uses",
+        "condition",
+        "created_at",
+        "created_by",
+        "consent_text_hash",
+        "props",
+    )
+    required = (
+        "grant_id",
+        "grantor",
+        "grantee",
+        "expires_at",
+        "created_at",
+        "created_by",
+        "consent_text_hash",
+    )
+
+    @classmethod
+    def row(cls, values):
+        out = super().row(values)
+        if values["grantor"] == values["grantee"]:
+            raise SchemaError(f"{cls.name}: a grant cannot be to its own grantor")
+        if len(str(values["consent_text_hash"])) != 64:
+            raise SchemaError(
+                f"{cls.name}: consent_text_hash must be a sha256 hex digest"
+            )
+        if not values["tools"]:
+            raise SchemaError(f"{cls.name}: a grant needs at least one tool")
+        return out
+
+
+class DelegationGrantEvents(Table):
+    """Everything done under a grant: creation, each use and refusal, revocation. The audit trail."""
+
+    name = "delegation_grant_events"
+    columns = (
+        "grant_id",
+        "ts",
+        "event",
+        "actor",
+        "tool",
+        "args_hash",
+        "result",
+        "on_behalf_of",
+        "props",
+    )
+    required = ("grant_id", "event", "actor", "result")
+    enums = (("event", GRANT_EVENT_VALUES), ("result", GRANT_RESULT_VALUES))
+
+
 # Constant API, kept so installed consumers name one table model rather than copying it.
 TEST_CASES = TestCases
 TEST_CASE_RUNS = TestCaseRuns
@@ -1099,6 +1164,8 @@ ANALYST_ASSIGNMENTS = AnalystAssignments
 ANALYST_SESSIONS = AnalystSessions
 ANALYST_TURNS = AnalystTurns
 ANALYST_MEMORY = AnalystMemory
+DELEGATION_GRANTS = DelegationGrants
+DELEGATION_GRANT_EVENTS = DelegationGrantEvents
 
 TABLES = {
     t.name: t
@@ -1129,6 +1196,8 @@ TABLES = {
         AnalystSessions,
         AnalystTurns,
         AnalystMemory,
+        DelegationGrants,
+        DelegationGrantEvents,
     )
 }
 
