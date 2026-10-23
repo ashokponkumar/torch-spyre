@@ -142,6 +142,12 @@ class Sandbox:
             "1",
             "(system, scope, credential_id, updated_at)",
         ),
+        (
+            "incident_events",
+            "ts >= now() - INTERVAL {days} DAY",
+            "(source, subject, ts)",
+        ),
+        ("incident_log", "1", "(incident_id, updated_at)"),
     )
 
     @classmethod
