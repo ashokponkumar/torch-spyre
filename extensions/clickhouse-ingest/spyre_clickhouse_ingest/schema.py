@@ -900,6 +900,101 @@ class IncidentLog(Table):
     )
 
 
+ASSIGNMENT_MODE_VALUES = frozenset({"shadow", "propose", "live"})
+SESSION_STATE_VALUES = frozenset({"open", "closed", "abandoned"})
+TURN_OUTCOME_VALUES = frozenset({"ok", "rejected_schema", "error", "timeout", "budget"})
+MEMORY_KIND_VALUES = frozenset({"case_summary", "lesson", "signature_candidate"})
+MEMORY_STATUS_VALUES = frozenset({"proposed", "confirmed", "rejected", "expired"})
+
+
+class AnalystAssignments(Table):
+    """Which model alias plays a role for which incidents; the newest effective row wins."""
+
+    name = "analyst_assignments"
+    columns = (
+        "role",
+        "scope_cause_class",
+        "scope_severity",
+        "scope_source",
+        "scope_repo",
+        "model_alias",
+        "mode",
+        "weight",
+        "effective_from",
+        "set_by",
+        "second_approver",
+        "reason",
+        "props",
+    )
+    required = ("role", "model_alias", "mode", "effective_from", "set_by")
+    enums = (("mode", ASSIGNMENT_MODE_VALUES),)
+
+
+class AnalystSessions(Table):
+    """One investigation of one incident by one role; the newest row per session is its state."""
+
+    name = "analyst_sessions"
+    columns = (
+        "session_id",
+        "updated_at",
+        "incident_id",
+        "role",
+        "state",
+        "parent_session_id",
+        "props",
+    )
+    required = ("session_id", "updated_at", "incident_id", "role")
+    enums = (("state", SESSION_STATE_VALUES),)
+
+
+class AnalystTurns(Table):
+    """One model call within a session."""
+
+    name = "analyst_turns"
+    columns = (
+        "session_id",
+        "step",
+        "ts",
+        "role",
+        "model_alias",
+        "served_model",
+        "prompt_version",
+        "input_ref",
+        "output",
+        "verdict",
+        "confidence",
+        "tokens_in",
+        "tokens_out",
+        "cost_usd",
+        "outcome",
+        "props",
+    )
+    required = ("session_id", "step", "ts", "role", "model_alias")
+    enums = (("outcome", TURN_OUTCOME_VALUES),)
+
+
+class AnalystMemory(Table):
+    """What the analyst has learned; append-only versions, the newest row per memory_id wins."""
+
+    name = "analyst_memory"
+    columns = (
+        "memory_id",
+        "updated_at",
+        "kind",
+        "subject",
+        "body",
+        "evidence_ids",
+        "confidence",
+        "status",
+        "proposed_by",
+        "confirmed_by",
+        "expires_at",
+        "props",
+    )
+    required = ("memory_id", "updated_at", "subject", "proposed_by")
+    enums = (("kind", MEMORY_KIND_VALUES), ("status", MEMORY_STATUS_VALUES))
+
+
 # Constant API, kept so installed consumers name one table model rather than copying it.
 TEST_CASES = TestCases
 TEST_CASE_RUNS = TestCaseRuns
@@ -920,6 +1015,10 @@ ARTIFACT_DISPATCHES = ArtifactDispatches
 DISPATCH_TARGETS = DispatchTargets
 INCIDENT_EVENTS = IncidentEvents
 INCIDENT_LOG = IncidentLog
+ANALYST_ASSIGNMENTS = AnalystAssignments
+ANALYST_SESSIONS = AnalystSessions
+ANALYST_TURNS = AnalystTurns
+ANALYST_MEMORY = AnalystMemory
 
 TABLES = {
     t.name: t
@@ -943,6 +1042,10 @@ TABLES = {
         DispatchTargets,
         IncidentEvents,
         IncidentLog,
+        AnalystAssignments,
+        AnalystSessions,
+        AnalystTurns,
+        AnalystMemory,
     )
 }
 

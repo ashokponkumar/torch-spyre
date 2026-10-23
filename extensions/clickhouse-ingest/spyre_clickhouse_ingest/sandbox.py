@@ -137,6 +137,18 @@ class Sandbox:
             "(source, subject, ts)",
         ),
         ("incident_log", "1", "(incident_id, updated_at)"),
+        (
+            "analyst_assignments",
+            "1",
+            "(role, scope_cause_class, scope_severity, scope_source, scope_repo, effective_from)",
+        ),
+        ("analyst_sessions", "1", "(session_id, updated_at)"),
+        (
+            "analyst_turns",
+            "ts >= now() - INTERVAL {days} DAY",
+            "(session_id, step, ts)",
+        ),
+        ("analyst_memory", "1", "(memory_id, updated_at)"),
     )
 
     @classmethod
