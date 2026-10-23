@@ -131,6 +131,17 @@ class Sandbox:
             "published_at >= now() - INTERVAL {days} DAY",
             "(published_at, target_type, target_prefix)",
         ),
+        ("credential_inventory", "1", "(system, scope, credential_id)"),
+        (
+            "credential_probes",
+            "ts >= now() - INTERVAL {days} DAY",
+            "(credential_id, ts)",
+        ),
+        (
+            "credential_owners",
+            "1",
+            "(system, scope, credential_id, updated_at)",
+        ),
         (
             "incident_events",
             "ts >= now() - INTERVAL {days} DAY",

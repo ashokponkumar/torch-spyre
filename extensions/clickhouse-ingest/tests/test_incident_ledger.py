@@ -1,6 +1,6 @@
 """incident_events / incident_log: the models match the DDL, bad rows are refused, the view reads the newest state."""
 
-import re
+import regex as re
 from pathlib import Path
 
 import pytest
