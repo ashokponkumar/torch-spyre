@@ -21,7 +21,7 @@ SELECT
     g.grant_id AS grant_id, g.grantor AS grantor, g.grantee AS grantee, g.tools AS tools,
     g.scope_json AS scope_json, g.condition AS condition, g.max_uses AS max_uses,
     g.created_at AS created_at, g.created_by AS created_by, g.expires_at AS expires_at,
-    g.consent_text_hash AS consent_text_hash,
+    g.consent_text_hash AS consent_text_hash, g.props AS props,
     e.n_used AS uses, e.n_denied AS denials,
     if(e.last_used = toDateTime64(0, 3, 'UTC'), NULL, e.last_used) AS last_used_at,
     if(e.first_revoked = toDateTime64(0, 3, 'UTC'), NULL, e.first_revoked) AS revoked_at,

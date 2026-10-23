@@ -161,3 +161,8 @@ def test_uses_count_only_successful_uses_and_unset_milestones_are_null():
 def test_view_aggregates_are_not_aliased_to_their_source_columns():
     for src in ("ts", "event", "result", "actor", "tool"):
         assert f"AS {src}," not in VIEWS.split("v_delegation_usage")[0]
+
+
+def test_the_current_view_exposes_the_props_recorded_at_consent():
+    # The gateway reads the grantor's rights and groups at consent from here, in the same query as the state.
+    assert "g.props AS props" in VIEWS.split("v_delegation_usage")[0]
