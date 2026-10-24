@@ -107,3 +107,26 @@ CREATE TABLE IF NOT EXISTS analyst_memory
 )
 ENGINE = MergeTree()
 ORDER BY (memory_id, updated_at);
+
+-- The analyst's working summary of one incident, read back by the runner before each turn.
+-- Append-only versions: the newest row per incident_id is the current case file. `doc` is the
+-- case file as redacted JSON; keys are the incident's matching keys, kept apart for reopen lookups.
+CREATE TABLE IF NOT EXISTS case_files
+(
+    incident_id   String,
+    version       UInt32,
+    updated_at    DateTime64(3, 'UTC'),
+    status        LowCardinality(String),   -- open | closed
+    through_step  UInt32 DEFAULT 0,
+    keys          Map(LowCardinality(String), String),
+    doc           String,
+
+    props           Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
+    CONSTRAINT chk_case_file_status CHECK status IN ('open', 'closed'),
+    CONSTRAINT chk_case_file_version CHECK version >= 1
+)
+ENGINE = MergeTree()
+ORDER BY (incident_id, version);

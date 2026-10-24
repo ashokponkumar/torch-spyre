@@ -15,13 +15,13 @@ Applying them in filename order works from an empty database.
 | `25-artifact-dispatch.sql` | `artifact_subscriptions` + its `artifact_subscription_versions` log and MV, `dispatch_requests`, `artifact_dispatches` | — |
 | `26-dispatch-targets.sql` | `dispatch_targets` | — |
 | `30-benchmarks.sql` | `benchmarks`, `benchmark_runs` | — |
-| `31-status.sql` | `status_samples`, `status_annotations` | — |
+| `31-status.sql` | `status_samples`, `status_annotations`, `status_leases` | — |
 | `32-external-feeds.sql` | `external_feed_fetches`, `external_events`, `external_reminders` | — |
 | `33-feedback.sql` | `feedback_signals` | — |
 | `40-jenkins-agents.sql` | `jenkins_agents` | — |
 | `41-credential-health.sql` | `credential_inventory`, `credential_probes`, `credential_owners` | — |
 | `42-incident-ledger.sql` | `incident_events`, `incident_log` | — |
-| `43-analyst.sql` | `analyst_assignments`, `analyst_sessions`, `analyst_turns`, `analyst_memory` | — |
+| `43-analyst.sql` | `analyst_assignments`, `analyst_sessions`, `analyst_turns`, `analyst_memory`, `case_files` | — |
 | `44-delegation.sql` | `delegation_grants`, `delegation_grant_events` | — |
 | `47-pipeline-runs.sql` | `pipeline_runs`, `pipeline_run_legs` | — |
 | `48-ci-run-timings.sql` | `ci_run_timings` | — |

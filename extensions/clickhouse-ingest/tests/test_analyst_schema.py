@@ -10,6 +10,8 @@ from spyre_clickhouse_ingest.schema import (
     ANALYST_MEMORY,
     ANALYST_SESSIONS,
     ANALYST_TURNS,
+    CASE_FILES,
+    CASE_FILE_STATUS_VALUES,
     ASSIGNMENT_MODE_VALUES,
     MEMORY_KIND_VALUES,
     MEMORY_STATUS_VALUES,
@@ -22,7 +24,13 @@ from spyre_clickhouse_ingest.schema import (
 SCHEMA = Path(__file__).resolve().parents[1] / "schema"
 DDL = (SCHEMA / "43-analyst.sql").read_text()
 VIEWS = (SCHEMA / "58-analyst-views.sql").read_text()
-MODELS = [ANALYST_ASSIGNMENTS, ANALYST_SESSIONS, ANALYST_TURNS, ANALYST_MEMORY]
+MODELS = [
+    ANALYST_ASSIGNMENTS,
+    ANALYST_SESSIONS,
+    ANALYST_TURNS,
+    ANALYST_MEMORY,
+    CASE_FILES,
+]
 
 
 def _ddl_columns(table: str) -> list[str]:
@@ -92,6 +100,15 @@ GOOD = {
         confidence=0.7,
         expires_at=None,
     ),
+    CASE_FILES: dict(
+        incident_id="inc-1",
+        version=1,
+        updated_at="2026-10-23 10:00:00.000",
+        status="open",
+        through_step=0,
+        keys={},
+        doc="{}",
+    ),
 }
 
 
@@ -114,6 +131,9 @@ def test_a_good_row_is_ordered_by_columns(model):
         (ANALYST_MEMORY, {"kind": "rumour"}),
         (ANALYST_MEMORY, {"status": "trusted"}),
         (ANALYST_MEMORY, {"proposed_by": ""}),
+        (CASE_FILES, {"status": "merged"}),
+        (CASE_FILES, {"version": 0}),
+        (CASE_FILES, {"doc": ""}),
     ],
     ids=lambda v: v if isinstance(v, str) else None,
 )
@@ -134,6 +154,7 @@ def test_ddl_declares_the_same_vocabularies_as_the_models():
         ("analyst_turns", "outcome", TURN_OUTCOME_VALUES),
         ("analyst_memory", "kind", MEMORY_KIND_VALUES),
         ("analyst_memory", "status", MEMORY_STATUS_VALUES),
+        ("case_files", "status", CASE_FILE_STATUS_VALUES),
     ]:
         listed = re.search(rf"CHECK {col} IN\s*\(([^)]*)\)", _block(table)).group(1)
         assert set(re.findall(r"'([^']*)'", listed)) == set(allowed), (table, col)

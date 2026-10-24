@@ -1,6 +1,6 @@
 """status_*, external_* and feedback_* tables: models match the DDL, bad rows are refused, views avoid the known pitfalls."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,7 @@ from spyre_clickhouse_ingest.schema import (
     EXTERNAL_REMINDERS,
     FEEDBACK_SIGNALS,
     STATUS_ANNOTATIONS,
+    STATUS_LEASES,
     STATUS_SAMPLES,
     SchemaError,
     TABLES,
@@ -23,6 +24,7 @@ SCHEMA = Path(__file__).resolve().parents[1] / "schema"
 FILES = {
     "status_samples": "31-status.sql",
     "status_annotations": "31-status.sql",
+    "status_leases": "31-status.sql",
     "external_feed_fetches": "32-external-feeds.sql",
     "external_events": "32-external-feeds.sql",
     "external_reminders": "32-external-feeds.sql",
@@ -37,6 +39,7 @@ VIEWS = {f: (SCHEMA / f).read_text() for f in VIEW_FILES}
 MODELS = [
     STATUS_SAMPLES,
     STATUS_ANNOTATIONS,
+    STATUS_LEASES,
     EXTERNAL_FEED_FETCHES,
     EXTERNAL_EVENTS,
     EXTERNAL_REMINDERS,
@@ -467,3 +470,10 @@ def test_file_numbers_are_unique_and_tables_sort_before_their_views():
     numbers = [p.name.split("-")[0] for p in SCHEMA.glob("[0-9]*.sql")]
     assert len(numbers) == len(set(numbers))
     assert "31" < "65" and "32" < "66" and "33" < "67"
+
+
+def test_a_lease_must_expire_after_its_heartbeat():
+    base = dict(lease_name="status-updater", holder="vm", heartbeat_at=T0, props={})
+    assert STATUS_LEASES.row({**base, "expires_at": T0 + timedelta(minutes=5)})
+    with pytest.raises(SchemaError):
+        STATUS_LEASES.row({**base, "expires_at": T0})

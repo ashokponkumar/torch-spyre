@@ -59,3 +59,23 @@ CREATE TABLE IF NOT EXISTS status_annotations
 )
 ENGINE = MergeTree()
 ORDER BY (annotation_id, ts);
+
+-- Who currently holds a named lease (the status updater's, a dead-man's switch), and until when.
+-- Append-only heartbeats: the newest row per lease_name wins, and a lease whose expires_at has
+-- passed is free. A holder renews by writing a later heartbeat_at and expires_at.
+CREATE TABLE IF NOT EXISTS status_leases
+(
+    lease_name    LowCardinality(String),
+    holder        String,                   -- vantage or process id
+    heartbeat_at  DateTime64(3, 'UTC'),
+    expires_at    DateTime64(3, 'UTC'),
+
+    props           Map(LowCardinality(String), String),
+    audit_uuid      UUID DEFAULT generateUUIDv7(),
+    audit_timestamp DateTime64(3) DEFAULT now64(3),
+
+    CONSTRAINT chk_lease_expiry CHECK expires_at > heartbeat_at
+)
+ENGINE = ReplacingMergeTree(heartbeat_at)
+ORDER BY lease_name
+TTL toDateTime(heartbeat_at) + INTERVAL 30 DAY;

@@ -1072,6 +1072,34 @@ class AnalystMemory(Table):
     enums = (("kind", MEMORY_KIND_VALUES), ("status", MEMORY_STATUS_VALUES))
 
 
+CASE_FILE_STATUS_VALUES = frozenset({"open", "closed"})
+
+
+class CaseFiles(Table):
+    """The analyst's working summary of an incident; append-only versions, the newest wins."""
+
+    name = "case_files"
+    columns = (
+        "incident_id",
+        "version",
+        "updated_at",
+        "status",
+        "through_step",
+        "keys",
+        "doc",
+        "props",
+    )
+    required = ("incident_id", "version", "updated_at", "doc")
+    enums = (("status", CASE_FILE_STATUS_VALUES),)
+
+    @classmethod
+    def row(cls, values):
+        out = super().row(values)
+        if int(values["version"]) < 1:
+            raise SchemaError(f"{cls.name}: version starts at 1")
+        return out
+
+
 GRANT_EVENT_VALUES = frozenset({"created", "used", "denied", "revoked", "expired"})
 GRANT_RESULT_VALUES = frozenset({"ok", "denied", "error"})
 
@@ -1244,6 +1272,21 @@ class StatusAnnotations(Table):
         return out
 
 
+class StatusLeases(Table):
+    """A named lease; the newest heartbeat per lease_name wins and a passed expires_at frees it."""
+
+    name = "status_leases"
+    columns = ("lease_name", "holder", "heartbeat_at", "expires_at", "props")
+    required = ("lease_name", "holder", "heartbeat_at", "expires_at")
+
+    @classmethod
+    def row(cls, values):
+        out = super().row(values)
+        if values["expires_at"] <= values["heartbeat_at"]:
+            raise SchemaError(f"{cls.name}: expires_at must be after heartbeat_at")
+        return out
+
+
 class ExternalFeedFetches(Table):
     """One fetch of one status feed from one vantage; a failed fetch is a row too."""
 
@@ -1395,10 +1438,12 @@ ANALYST_ASSIGNMENTS = AnalystAssignments
 ANALYST_SESSIONS = AnalystSessions
 ANALYST_TURNS = AnalystTurns
 ANALYST_MEMORY = AnalystMemory
+CASE_FILES = CaseFiles
 DELEGATION_GRANTS = DelegationGrants
 DELEGATION_GRANT_EVENTS = DelegationGrantEvents
 STATUS_SAMPLES = StatusSamples
 STATUS_ANNOTATIONS = StatusAnnotations
+STATUS_LEASES = StatusLeases
 EXTERNAL_FEED_FETCHES = ExternalFeedFetches
 EXTERNAL_EVENTS = ExternalEvents
 EXTERNAL_REMINDERS = ExternalReminders
@@ -1433,10 +1478,12 @@ TABLES = {
         AnalystSessions,
         AnalystTurns,
         AnalystMemory,
+        CaseFiles,
         DelegationGrants,
         DelegationGrantEvents,
         StatusSamples,
         StatusAnnotations,
+        StatusLeases,
         ExternalFeedFetches,
         ExternalEvents,
         ExternalReminders,

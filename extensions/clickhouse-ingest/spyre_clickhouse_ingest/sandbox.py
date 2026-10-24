@@ -160,6 +160,7 @@ class Sandbox:
             "(session_id, step, ts)",
         ),
         ("analyst_memory", "1", "(memory_id, updated_at)"),
+        ("case_files", "1", "(incident_id, version)"),
         ("delegation_grants", "1", "(grant_id, created_at)"),
         (
             "delegation_grant_events",
@@ -168,6 +169,7 @@ class Sandbox:
         ),
         ("status_samples", "ts >= now() - INTERVAL {days} DAY", "sample_id"),
         ("status_annotations", "1", "(annotation_id, ts)"),
+        ("status_leases", "1", "(lease_name, heartbeat_at)"),
         (
             "external_feed_fetches",
             "fetched_at >= now() - INTERVAL {days} DAY",
