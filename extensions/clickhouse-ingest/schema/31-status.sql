@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS status_samples
     sample_id    String,                  -- vantage|component|probe|bucket start epoch; see status_sample_id()
     ts           DateTime64(3, 'UTC'),
     bucket       DateTime('UTC') MATERIALIZED toStartOfFiveMinutes(ts),
-    vantage      LowCardinality(String),  -- gha-hosted | aiplatformwh-vm | jenkins-worker | cluster-pod | laptop
+    vantage      LowCardinality(String),  -- gha-hosted | build-vm | jenkins-worker | cluster-pod | laptop
     component    LowCardinality(String),
     probe        LowCardinality(String),  -- http_ping | tls | feed | tick | heartbeat
     state        LowCardinality(String),  -- ok | degraded (answered, but slow) | failing | unknown
