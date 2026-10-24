@@ -176,3 +176,9 @@ def test_view_aggregates_are_not_aliased_to_their_source_columns():
 def test_a_dead_memory_stays_visible_to_the_reader_that_filters_it():
     view = VIEWS[VIEWS.index("v_analyst_role_memory_current") :].split(";")[0]
     assert "WHERE" not in view
+
+
+def test_views_keep_props_because_readers_use_the_family_and_role_keys():
+    for view in VIEWED:
+        sql = VIEWS[VIEWS.index(f"CREATE VIEW IF NOT EXISTS {view} AS") :].split(";")[0]
+        assert "argMax(props, " in sql

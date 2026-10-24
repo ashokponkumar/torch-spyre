@@ -19,6 +19,7 @@ WITH cur AS
         argMax(author_role, updated_at) AS cur_author_role,
         argMax(author_family, updated_at) AS cur_author_family,
         argMax(expires_at, updated_at) AS cur_expires_at,
+        argMax(props, updated_at) AS cur_props,
         max(updated_at) AS last_updated_at
     FROM analyst_role_memory
     GROUP BY memory_id
@@ -38,6 +39,7 @@ SELECT
     cur_author_role AS author_role,
     cur_author_family AS author_family,
     cur_expires_at AS expires_at,
+    cur_props AS props,
     last_updated_at AS updated_at
 FROM cur;
 
@@ -50,6 +52,7 @@ WITH cur AS
         argMax(kind, updated_at) AS cur_kind,
         argMax(text, updated_at) AS cur_text,
         argMax(deleted, updated_at) AS cur_deleted,
+        argMax(props, updated_at) AS cur_props,
         max(updated_at) AS last_updated_at
     FROM analyst_project_files
     GROUP BY role, project, name
@@ -59,6 +62,7 @@ SELECT
     cur_kind AS kind,
     cur_text AS text,
     cur_deleted AS deleted,
+    cur_props AS props,
     last_updated_at AS updated_at
 FROM cur;
 
@@ -75,6 +79,7 @@ WITH cur AS
         argMax(evidence_outcomes, created_at) AS cur_evidence_outcomes,
         argMax(status, created_at) AS cur_status,
         argMax(decided_by, created_at) AS cur_decided_by,
+        argMax(props, created_at) AS cur_props,
         max(created_at) AS last_created_at
     FROM analyst_profile_changes
     GROUP BY change_id
@@ -88,6 +93,7 @@ SELECT
     cur_evidence_outcomes AS evidence_outcomes,
     cur_status AS status,
     cur_decided_by AS decided_by,
+    cur_props AS props,
     last_created_at AS created_at
 FROM cur;
 
@@ -108,6 +114,7 @@ WITH cur AS
         argMax(flags, scored_at) AS cur_flags,
         argMax(frozen, scored_at) AS cur_frozen,
         argMax(krs, scored_at) AS cur_krs,
+        argMax(props, scored_at) AS cur_props,
         max(scored_at) AS last_scored_at
     FROM goal_scores
     GROUP BY cycle, row_kind, subject
@@ -125,6 +132,7 @@ SELECT
     cur_flags AS flags,
     cur_frozen AS frozen,
     cur_krs AS krs,
+    cur_props AS props,
     last_scored_at AS scored_at
 FROM cur;
 
@@ -146,6 +154,7 @@ WITH cur AS
         argMax(decided_by, created_at) AS cur_decided_by,
         argMax(requires_human, created_at) AS cur_requires_human,
         argMax(detail, created_at) AS cur_detail,
+        argMax(props, created_at) AS cur_props,
         max(created_at) AS last_created_at
     FROM goal_proposals
     GROUP BY proposal_id
@@ -164,5 +173,6 @@ SELECT
     cur_decided_by AS decided_by,
     cur_requires_human AS requires_human,
     cur_detail AS detail,
+    cur_props AS props,
     last_created_at AS created_at
 FROM cur;
