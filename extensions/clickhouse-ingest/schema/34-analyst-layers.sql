@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS analyst_role_memory
     CONSTRAINT chk_role_memory_scope CHECK scope IN ('private', 'team', 'shared'),
     CONSTRAINT chk_role_memory_kind CHECK kind IN ('case_summary', 'lesson', 'signature_candidate', 'prompt_note', 'failure_case'),
     CONSTRAINT chk_role_memory_confidence CHECK confidence >= 0 AND confidence <= 1,
-    CONSTRAINT chk_role_memory_status CHECK status IN ('proposed', 'confirmed', 'rejected', 'expired', 'quarantined', 'retracted')
+    CONSTRAINT chk_role_memory_status CHECK status IN ('proposed', 'confirmed', 'rejected', 'expired', 'quarantined', 'retracted', 'active')
 )
 ENGINE = MergeTree()
 ORDER BY (scope, namespace, memory_id, updated_at);
