@@ -1107,7 +1107,15 @@ ANALYST_ROLE_MEMORY_KIND_VALUES = frozenset(
     {"case_summary", "lesson", "signature_candidate", "prompt_note", "failure_case"}
 )
 ANALYST_ROLE_MEMORY_STATUS_VALUES = frozenset(
-    {"proposed", "confirmed", "rejected", "expired", "quarantined", "retracted"}
+    {
+        "proposed",
+        "confirmed",
+        "rejected",
+        "expired",
+        "quarantined",
+        "retracted",
+        "active",
+    }
 )
 ANALYST_PROJECT_FILES_KIND_VALUES = frozenset({"case_file", "note", "artefact"})
 ANALYST_OUTCOMES_OUTCOME_VALUES = frozenset({"accepted", "rejected", "overturned"})

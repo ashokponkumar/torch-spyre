@@ -182,3 +182,8 @@ def test_views_keep_props_because_readers_use_the_family_and_role_keys():
     for view in VIEWED:
         sql = VIEWS[VIEWS.index(f"CREATE VIEW IF NOT EXISTS {view} AS") :].split(";")[0]
         assert "argMax(props, " in sql
+
+
+def test_a_private_role_memory_is_active_until_it_expires():
+    assert "active" in schema.ANALYST_ROLE_MEMORY_STATUS_VALUES
+    assert "active" not in schema.MEMORY_STATUS_VALUES
