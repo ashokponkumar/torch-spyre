@@ -18,6 +18,7 @@ Applying them in filename order works from an empty database.
 | `31-status.sql` | `status_samples`, `status_annotations`, `status_leases` | — |
 | `32-external-feeds.sql` | `external_feed_fetches`, `external_events`, `external_reminders` | — |
 | `33-feedback.sql` | `feedback_signals` | — |
+| `34-analyst-layers.sql` | `analyst_role_memory`, `analyst_project_files`, `analyst_outcomes`, `analyst_profile_changes`, `analyst_work_items`, `analyst_orch_steps`, `analyst_orch_events`, `analyst_role_lifecycle`, `analyst_agent_calls`, `access_decisions`, `recovery_actions`, `analyst_optimizer_records`, `goal_scores`, `goal_reviews`, `goal_proposals`, `goal_comments`, `goal_audit`, `assistant_profiles`, `assistant_private_memory`, `assistant_inbox`, `assistant_drafts`, `assistant_commitments`, `assistant_queue`, `assistant_audit` | — |
 | `40-jenkins-agents.sql` | `jenkins_agents` | — |
 | `41-credential-health.sql` | `credential_inventory`, `credential_probes`, `credential_owners` | — |
 | `42-incident-ledger.sql` | `incident_events`, `incident_log` | — |
@@ -42,6 +43,7 @@ Applying them in filename order works from an empty database.
 | `65-status-views.sql` | `v_status_bucket`, `v_status_current`, `v_status_daily` | 31 |
 | `66-external-feed-views.sql` | `v_external_events_current`, `v_external_feed_health` | 32 |
 | `67-feedback-views.sql` | `v_feedback_current`, `v_feedback_scores`, `v_signature_quality` | 33 |
+| `68-analyst-layers-views.sql` | `v_analyst_role_memory_current`, `v_analyst_project_files_current`, `v_analyst_profile_changes_current`, `v_goal_scores_current`, `v_goal_proposals_current` | 34 |
 | `70-vllm-hud-projection.sql` | `oss_ci_benchmark_v3`, `oss_ci_benchmark_metadata`, their `_by_tag` copies + their MVs | 30, 60 |
 
 The `50`/`51`/`52` split is by what a view reads, not by taste: the artifact and functional view

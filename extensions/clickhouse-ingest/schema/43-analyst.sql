@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS analyst_memory
     body          String DEFAULT '',             -- redacted
     evidence_ids  Array(String),
     confidence    Float32 DEFAULT 0,
-    status        LowCardinality(String),        -- proposed | confirmed | rejected | expired
+    status        LowCardinality(String),        -- proposed | confirmed | rejected | expired | quarantined | retracted
     proposed_by   String,
     confirmed_by  String DEFAULT '',
     expires_at    Nullable(DateTime64(3, 'UTC')),  -- NULL until a review date is set
@@ -102,8 +102,8 @@ CREATE TABLE IF NOT EXISTS analyst_memory
     audit_timestamp DateTime64(3) DEFAULT now64(3),
 
     CONSTRAINT chk_memory_kind CHECK kind IN ('case_summary', 'lesson', 'signature_candidate'),
-    CONSTRAINT chk_memory_status CHECK status IN ('proposed', 'confirmed', 'rejected', 'expired'),
-    CONSTRAINT chk_memory_confidence CHECK confidence >= 0 AND confidence <= 1
+    CONSTRAINT chk_memory_confidence CHECK confidence >= 0 AND confidence <= 1,
+    CONSTRAINT chk_memory_status CHECK status IN ('proposed', 'confirmed', 'rejected', 'expired', 'quarantined', 'retracted')
 )
 ENGINE = MergeTree()
 ORDER BY (memory_id, updated_at);

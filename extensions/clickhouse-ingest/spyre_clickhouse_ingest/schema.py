@@ -981,7 +981,9 @@ ASSIGNMENT_MODE_VALUES = frozenset({"shadow", "propose", "live"})
 SESSION_STATE_VALUES = frozenset({"open", "closed", "abandoned"})
 TURN_OUTCOME_VALUES = frozenset({"ok", "rejected_schema", "error", "timeout", "budget"})
 MEMORY_KIND_VALUES = frozenset({"case_summary", "lesson", "signature_candidate"})
-MEMORY_STATUS_VALUES = frozenset({"proposed", "confirmed", "rejected", "expired"})
+MEMORY_STATUS_VALUES = frozenset(
+    {"proposed", "confirmed", "rejected", "expired", "quarantined", "retracted"}
+)
 
 
 class AnalystAssignments(Table):
@@ -1098,6 +1100,593 @@ class CaseFiles(Table):
         if int(values["version"]) < 1:
             raise SchemaError(f"{cls.name}: version starts at 1")
         return out
+
+
+ANALYST_ROLE_MEMORY_SCOPE_VALUES = frozenset({"private", "team", "shared"})
+ANALYST_ROLE_MEMORY_KIND_VALUES = frozenset(
+    {"case_summary", "lesson", "signature_candidate", "prompt_note", "failure_case"}
+)
+ANALYST_ROLE_MEMORY_STATUS_VALUES = frozenset(
+    {"proposed", "confirmed", "rejected", "expired", "quarantined", "retracted"}
+)
+ANALYST_PROJECT_FILES_KIND_VALUES = frozenset({"case_file", "note", "artefact"})
+ANALYST_OUTCOMES_OUTCOME_VALUES = frozenset({"accepted", "rejected", "overturned"})
+ANALYST_OUTCOMES_JUDGED_KIND_VALUES = frozenset({"human", "validator"})
+ANALYST_WORK_ITEMS_STATUS_VALUES = frozenset(
+    {"runnable", "waiting", "waiting_human", "parked", "closed"}
+)
+ANALYST_AGENT_CALLS_KIND_VALUES = frozenset({"ask", "cross_ref"})
+ANALYST_AGENT_CALLS_OUTCOME_VALUES = frozenset({"ok", "refused", "timeout", "failed"})
+ANALYST_AGENT_CALLS_STANCE_VALUES = frozenset(
+    {"", "agree", "disagree", "unsure", "answer"}
+)
+ACCESS_DECISIONS_ROW_KIND_VALUES = frozenset({"decision", "complaint"})
+ACCESS_DECISIONS_OUTCOME_VALUES = frozenset(
+    {"allow", "redact", "deny", "route", "summarise", "declassify", "complaint"}
+)
+RECOVERY_ACTIONS_ROW_KIND_VALUES = frozenset(
+    {"action", "refusal", "demotion", "reinstatement"}
+)
+RECOVERY_ACTIONS_MODE_VALUES = frozenset({"dry_run", "live", "n/a"})
+ANALYST_OPTIMIZER_RECORDS_KIND_VALUES = frozenset(
+    {"run", "audit", "suggestion", "pr_plan", "feedback"}
+)
+GOAL_SCORES_ROW_KIND_VALUES = frozenset({"kr", "role"})
+GOAL_REVIEWS_STATUS_VALUES = frozenset(
+    {"proposed", "awaiting_reviewer", "budget", "rejected_schema"}
+)
+GOAL_PROPOSALS_STATUS_VALUES = frozenset(
+    {"proposed", "approved", "rejected", "applied"}
+)
+ASSISTANT_PROFILES_STATE_VALUES = frozenset({"active", "paused"})
+ASSISTANT_INBOX_STATUS_VALUES = frozenset(
+    {"new", "needs_reply", "ignored", "deferred", "delegated", "escalated"}
+)
+ASSISTANT_DRAFTS_STATUS_VALUES = frozenset(
+    {"pending", "sent", "rejected", "blocked", "dry_run"}
+)
+
+
+class AnalystRoleMemory(Table):
+    """Per-role memory: private to a role, a team proposal or a shared proposal."""
+
+    name = "analyst_role_memory"
+    columns = (
+        "memory_id",
+        "updated_at",
+        "scope",
+        "namespace",
+        "kind",
+        "subject",
+        "body",
+        "evidence_ids",
+        "confidence",
+        "status",
+        "proposed_by",
+        "confirmed_by",
+        "author_role",
+        "author_family",
+        "expires_at",
+        "props",
+    )
+    required = (
+        "memory_id",
+        "updated_at",
+        "scope",
+        "namespace",
+        "subject",
+        "proposed_by",
+    )
+    enums = (
+        ("scope", ANALYST_ROLE_MEMORY_SCOPE_VALUES),
+        ("kind", ANALYST_ROLE_MEMORY_KIND_VALUES),
+        ("status", ANALYST_ROLE_MEMORY_STATUS_VALUES),
+    )
+
+
+class AnalystProjectFiles(Table):
+    """A role's bounded project space."""
+
+    name = "analyst_project_files"
+    columns = (
+        "role",
+        "project",
+        "name",
+        "kind",
+        "text",
+        "updated_at",
+        "deleted",
+        "props",
+    )
+    required = ("role", "project", "name", "updated_at")
+    enums = (("kind", ANALYST_PROJECT_FILES_KIND_VALUES),)
+
+
+class AnalystOutcomes(Table):
+    """How a role's answer was judged, by a person or an independent validator, never by the judged role."""
+
+    name = "analyst_outcomes"
+    columns = (
+        "outcome_id",
+        "recorded_at",
+        "role",
+        "incident_id",
+        "turn_ref",
+        "outcome",
+        "judged_by",
+        "judged_kind",
+        "judged_family",
+        "lesson_id",
+        "note",
+        "props",
+    )
+    required = ("outcome_id", "recorded_at", "role", "judged_by")
+    enums = (
+        ("outcome", ANALYST_OUTCOMES_OUTCOME_VALUES),
+        ("judged_kind", ANALYST_OUTCOMES_JUDGED_KIND_VALUES),
+    )
+
+
+class AnalystProfileChanges(Table):
+    """A proposed change to a role's profile, backed by recorded outcomes."""
+
+    name = "analyst_profile_changes"
+    columns = (
+        "change_id",
+        "created_at",
+        "proposed_by",
+        "target_role",
+        "target",
+        "text",
+        "evidence_outcomes",
+        "status",
+        "decided_by",
+        "props",
+    )
+    required = ("change_id", "created_at", "proposed_by", "target_role")
+
+
+class AnalystWorkItems(Table):
+    """The orchestrator's durable work items; the newest row per item_id is the item."""
+
+    name = "analyst_work_items"
+    columns = (
+        "item_id",
+        "updated_at",
+        "started_at",
+        "status",
+        "reason",
+        "not_before",
+        "step_count",
+        "escalations",
+        "waits",
+        "actions_proposed",
+        "invalid_streak",
+        "error_streak",
+        "stale_cycles",
+        "stall_escalated",
+        "last_progress_cycle",
+        "digest",
+        "observations",
+        "routed",
+        "last_rejection",
+        "alias_override",
+        "inc_digest",
+        "base_digest",
+        "base_cycle",
+        "mode_note",
+        "props",
+    )
+    required = ("item_id", "updated_at", "started_at")
+    enums = (("status", ANALYST_WORK_ITEMS_STATUS_VALUES),)
+
+
+class AnalystOrchSteps(Table):
+    """One row per orchestrator step, carrying the item as it stands afterwards (the checkpoint a restart recovers from)."""
+
+    name = "analyst_orch_steps"
+    columns = (
+        "item_id",
+        "step_no",
+        "ts",
+        "cycle_no",
+        "kind",
+        "outcome",
+        "detail",
+        "proposal_hash",
+        "model_alias",
+        "tokens",
+        "item_after",
+        "props",
+    )
+    required = ("item_id", "step_no", "ts")
+
+
+class AnalystOrchEvents(Table):
+    """Orchestrator events: cycles, stalls, dead-man alerts, role lifecycle."""
+
+    name = "analyst_orch_events"
+    columns = (
+        "ts",
+        "kind",
+        "cycle_no",
+        "reason",
+        "detail",
+        "actor",
+        "props",
+    )
+    required = ("ts", "kind")
+
+
+class AnalystRoleLifecycle(Table):
+    """Created-role lifecycle: proposed, reviewed, drafted, promoted, retired."""
+
+    name = "analyst_role_lifecycle"
+    columns = (
+        "name",
+        "updated_at",
+        "state",
+        "actor",
+        "action",
+        "detail",
+        "spec",
+        "expires_at",
+        "props",
+    )
+    required = ("name", "updated_at", "state", "action")
+
+
+class AnalystAgentCalls(Table):
+    """Every agent-to-agent call, refused or not."""
+
+    name = "analyst_agent_calls"
+    columns = (
+        "ts",
+        "incident_id",
+        "kind",
+        "caller",
+        "callee",
+        "request_type",
+        "request_hash",
+        "outcome",
+        "reason",
+        "depth",
+        "tokens",
+        "latency_ms",
+        "stance",
+        "confidence",
+        "answer_hash",
+        "cost_class",
+        "props",
+    )
+    required = ("ts", "kind", "caller", "callee")
+    enums = (
+        ("kind", ANALYST_AGENT_CALLS_KIND_VALUES),
+        ("outcome", ANALYST_AGENT_CALLS_OUTCOME_VALUES),
+        ("stance", ANALYST_AGENT_CALLS_STANCE_VALUES),
+    )
+
+
+class AccessDecisions(Table):
+    """The information-access gate's decision log."""
+
+    name = "access_decisions"
+    columns = (
+        "ts",
+        "run_id",
+        "seq",
+        "row_kind",
+        "sender",
+        "on_behalf_of",
+        "dest_kind",
+        "recipients",
+        "label",
+        "outcome",
+        "code",
+        "digest",
+        "rule",
+        "approved_by",
+        "props",
+    )
+    required = ("ts", "run_id", "seq", "sender")
+    enums = (
+        ("row_kind", ACCESS_DECISIONS_ROW_KIND_VALUES),
+        ("outcome", ACCESS_DECISIONS_OUTCOME_VALUES),
+    )
+
+
+class RecoveryActions(Table):
+    """The recovery agent's audit: an action row per state change (newest per action_id wins), refusals, and signature demotions."""
+
+    name = "recovery_actions"
+    columns = (
+        "action_id",
+        "updated_at",
+        "row_kind",
+        "mode",
+        "actuator",
+        "host",
+        "repo",
+        "pr",
+        "head_sha",
+        "run_id",
+        "job",
+        "signature",
+        "cause_class",
+        "idem_key",
+        "attempt",
+        "status",
+        "outcome",
+        "outcome_ts",
+        "reason",
+        "evidence_url",
+        "incident_id",
+        "detail",
+        "props",
+    )
+    required = ("action_id", "updated_at", "row_kind")
+    enums = (
+        ("row_kind", RECOVERY_ACTIONS_ROW_KIND_VALUES),
+        ("mode", RECOVERY_ACTIONS_MODE_VALUES),
+    )
+
+
+class AnalystOptimizerRecords(Table):
+    """What the optimizer role writes: runs, audit steps, suggestions, PR plans and the outcome of past suggestions."""
+
+    name = "analyst_optimizer_records"
+    columns = (
+        "ts",
+        "kind",
+        "fingerprint",
+        "doc",
+        "props",
+    )
+    required = ("kind", "doc")
+    enums = (("kind", ANALYST_OPTIMIZER_RECORDS_KIND_VALUES),)
+
+
+class GoalScores(Table):
+    """A scored review cycle: one row per key result and one per role."""
+
+    name = "goal_scores"
+    columns = (
+        "cycle",
+        "scored_at",
+        "row_kind",
+        "subject",
+        "owner",
+        "value",
+        "n",
+        "raw",
+        "score",
+        "counter_value",
+        "breached",
+        "coverage",
+        "flags",
+        "frozen",
+        "krs",
+        "props",
+    )
+    required = ("cycle", "scored_at", "row_kind", "subject")
+    enums = (("row_kind", GOAL_SCORES_ROW_KIND_VALUES),)
+
+
+class GoalReviews(Table):
+    """A reviewer model's review of one role for one cycle."""
+
+    name = "goal_reviews"
+    columns = (
+        "review_id",
+        "cycle",
+        "role",
+        "reviewer_role",
+        "reviewer_model",
+        "reviewer_family",
+        "created_at",
+        "rating",
+        "score",
+        "strengths",
+        "gaps",
+        "status",
+        "flags",
+        "tokens",
+        "props",
+    )
+    required = ("review_id", "cycle", "role", "created_at")
+    enums = (("status", GOAL_REVIEWS_STATUS_VALUES),)
+
+
+class GoalProposals(Table):
+    """Proposals out of a review."""
+
+    name = "goal_proposals"
+    columns = (
+        "proposal_id",
+        "created_at",
+        "cycle",
+        "proposed_by",
+        "proposer_kind",
+        "target_role",
+        "type",
+        "target",
+        "text",
+        "review_id",
+        "status",
+        "decided_by",
+        "requires_human",
+        "detail",
+        "props",
+    )
+    required = ("proposal_id", "created_at", "proposed_by", "target_role")
+    enums = (("status", GOAL_PROPOSALS_STATUS_VALUES),)
+
+
+class GoalComments(Table):
+    """A person's comment on a review."""
+
+    name = "goal_comments"
+    columns = (
+        "comment_id",
+        "created_at",
+        "review_id",
+        "author",
+        "verdict",
+        "text",
+        "props",
+    )
+    required = ("comment_id", "created_at", "review_id", "author")
+
+
+class GoalAudit(Table):
+    """Who did what in the goals layer."""
+
+    name = "goal_audit"
+    columns = (
+        "ts",
+        "actor",
+        "action",
+        "ref",
+        "detail",
+        "props",
+    )
+    required = ("ts", "actor", "action")
+
+
+class AssistantProfiles(Table):
+    """A person's opted-in assistant."""
+
+    name = "assistant_profiles"
+    columns = (
+        "person",
+        "display",
+        "state",
+        "card",
+        "live_adapters",
+        "backup_person",
+        "allowed_targets",
+        "created_at",
+        "updated_at",
+        "props",
+    )
+    required = ("person", "updated_at")
+    enums = (("state", ASSISTANT_PROFILES_STATE_VALUES),)
+
+
+class AssistantPrivateMemory(Table):
+    """What an assistant knows about its person."""
+
+    name = "assistant_private_memory"
+    columns = (
+        "person",
+        "preferences",
+        "working_hours",
+        "focus",
+        "owned_areas",
+        "updated_at",
+        "props",
+    )
+    required = ("person", "updated_at")
+
+
+class AssistantInbox(Table):
+    """Inbound items for a person's assistant; the item and its triage status in one row."""
+
+    name = "assistant_inbox"
+    columns = (
+        "item_id",
+        "recipient",
+        "source",
+        "sender",
+        "subject",
+        "body",
+        "links",
+        "urgency",
+        "incident_ids",
+        "respond_by",
+        "thread",
+        "received_at",
+        "status",
+        "updated_at",
+        "props",
+    )
+    required = ("item_id", "recipient", "received_at", "updated_at")
+    enums = (("status", ASSISTANT_INBOX_STATUS_VALUES),)
+
+
+class AssistantDrafts(Table):
+    """Drafts awaiting a person's approval, and what became of them."""
+
+    name = "assistant_drafts"
+    columns = (
+        "draft_id",
+        "person",
+        "item_id",
+        "kind",
+        "adapter",
+        "target",
+        "thread",
+        "text",
+        "status",
+        "urgent",
+        "payload",
+        "created_at",
+        "updated_at",
+        "props",
+    )
+    required = ("draft_id", "person", "updated_at")
+    enums = (("status", ASSISTANT_DRAFTS_STATUS_VALUES),)
+
+
+class AssistantCommitments(Table):
+    """Commitments and maintenance windows an assistant reminds its person about."""
+
+    name = "assistant_commitments"
+    columns = (
+        "commitment_id",
+        "person",
+        "text",
+        "due_at",
+        "kind",
+        "lead_minutes",
+        "reminded",
+        "done",
+        "updated_at",
+        "props",
+    )
+    required = ("commitment_id", "person", "due_at", "updated_at")
+
+
+class AssistantQueue(Table):
+    """Messages held for a person's next digest."""
+
+    name = "assistant_queue"
+    columns = (
+        "queue_id",
+        "person",
+        "text",
+        "queued_at",
+        "drained",
+        "updated_at",
+        "props",
+    )
+    required = ("queue_id", "person", "queued_at", "updated_at")
+
+
+class AssistantAudit(Table):
+    """Assistant lifecycle and send audit."""
+
+    name = "assistant_audit"
+    columns = (
+        "ts",
+        "actor",
+        "person",
+        "event",
+        "ref",
+        "detail",
+        "props",
+    )
+    required = ("ts", "actor", "person", "event")
 
 
 GRANT_EVENT_VALUES = frozenset({"created", "used", "denied", "revoked", "expired"})
@@ -1439,6 +2028,30 @@ ANALYST_SESSIONS = AnalystSessions
 ANALYST_TURNS = AnalystTurns
 ANALYST_MEMORY = AnalystMemory
 CASE_FILES = CaseFiles
+ANALYST_ROLE_MEMORY = AnalystRoleMemory
+ANALYST_PROJECT_FILES = AnalystProjectFiles
+ANALYST_OUTCOMES = AnalystOutcomes
+ANALYST_PROFILE_CHANGES = AnalystProfileChanges
+ANALYST_WORK_ITEMS = AnalystWorkItems
+ANALYST_ORCH_STEPS = AnalystOrchSteps
+ANALYST_ORCH_EVENTS = AnalystOrchEvents
+ANALYST_ROLE_LIFECYCLE = AnalystRoleLifecycle
+ANALYST_AGENT_CALLS = AnalystAgentCalls
+ACCESS_DECISIONS = AccessDecisions
+RECOVERY_ACTIONS = RecoveryActions
+ANALYST_OPTIMIZER_RECORDS = AnalystOptimizerRecords
+GOAL_SCORES = GoalScores
+GOAL_REVIEWS = GoalReviews
+GOAL_PROPOSALS = GoalProposals
+GOAL_COMMENTS = GoalComments
+GOAL_AUDIT = GoalAudit
+ASSISTANT_PROFILES = AssistantProfiles
+ASSISTANT_PRIVATE_MEMORY = AssistantPrivateMemory
+ASSISTANT_INBOX = AssistantInbox
+ASSISTANT_DRAFTS = AssistantDrafts
+ASSISTANT_COMMITMENTS = AssistantCommitments
+ASSISTANT_QUEUE = AssistantQueue
+ASSISTANT_AUDIT = AssistantAudit
 DELEGATION_GRANTS = DelegationGrants
 DELEGATION_GRANT_EVENTS = DelegationGrantEvents
 STATUS_SAMPLES = StatusSamples
@@ -1479,6 +2092,30 @@ TABLES = {
         AnalystTurns,
         AnalystMemory,
         CaseFiles,
+        AnalystRoleMemory,
+        AnalystProjectFiles,
+        AnalystOutcomes,
+        AnalystProfileChanges,
+        AnalystWorkItems,
+        AnalystOrchSteps,
+        AnalystOrchEvents,
+        AnalystRoleLifecycle,
+        AnalystAgentCalls,
+        AccessDecisions,
+        RecoveryActions,
+        AnalystOptimizerRecords,
+        GoalScores,
+        GoalReviews,
+        GoalProposals,
+        GoalComments,
+        GoalAudit,
+        AssistantProfiles,
+        AssistantPrivateMemory,
+        AssistantInbox,
+        AssistantDrafts,
+        AssistantCommitments,
+        AssistantQueue,
+        AssistantAudit,
         DelegationGrants,
         DelegationGrantEvents,
         StatusSamples,

@@ -328,7 +328,7 @@ def test_fact_tables_declare_no_identity_and_dimensions_do():
 
 def test_registry_covers_exactly_the_v2_tables():
     # The functional/benchmark four, the artifact four, the capability two, pipeline_runs,
-    # ci_run_timings, the dispatch four, the credential three, the incident two, the analyst four and the delegation two. Pinned as an exact set so adding a table to the DDL
+    # ci_run_timings, the dispatch four, the credential three, the incident two, the analyst four and the delegation two, plus the analyst-layer tables. Pinned as an exact set so adding a table to the DDL
     # without modelling it here (or vice versa) fails rather than drifting.
     assert set(TABLES) == {
         "test_cases",
@@ -358,6 +358,30 @@ def test_registry_covers_exactly_the_v2_tables():
         "analyst_turns",
         "analyst_memory",
         "case_files",
+        "analyst_role_memory",
+        "analyst_project_files",
+        "analyst_outcomes",
+        "analyst_profile_changes",
+        "analyst_work_items",
+        "analyst_orch_steps",
+        "analyst_orch_events",
+        "analyst_role_lifecycle",
+        "analyst_agent_calls",
+        "access_decisions",
+        "recovery_actions",
+        "analyst_optimizer_records",
+        "goal_scores",
+        "goal_reviews",
+        "goal_proposals",
+        "goal_comments",
+        "goal_audit",
+        "assistant_profiles",
+        "assistant_private_memory",
+        "assistant_inbox",
+        "assistant_drafts",
+        "assistant_commitments",
+        "assistant_queue",
+        "assistant_audit",
         "delegation_grants",
         "delegation_grant_events",
         "status_samples",
