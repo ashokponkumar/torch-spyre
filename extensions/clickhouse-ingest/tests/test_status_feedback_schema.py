@@ -95,7 +95,7 @@ def _sample(**over):
         dict(
             sample_id="vm|jenkins|http_ping|1",
             ts=T0,
-            vantage="aiplatformwh-vm",
+            vantage="build-vm",
             component="jenkins",
             probe="http_ping",
             state="ok",
