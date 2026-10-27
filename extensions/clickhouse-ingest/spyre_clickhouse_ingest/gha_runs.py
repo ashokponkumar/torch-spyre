@@ -44,7 +44,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from collections.abc import Iterator, Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -488,6 +490,18 @@ def window_start(
     return (resume, True) if resume < start else (start, False)
 
 
+def _fetch_attempt(gh: GitHub, repo: str, latest: Mapping[str, Any], a: int, run):
+    """(run, jobs) of one attempt, or None when GitHub will not serve it."""
+    try:
+        run = run or gh.attempt(repo, latest["id"], a)
+        return run, gh.jobs(repo, latest["id"], a)
+    except Unavailable as err:
+        # Not stored, so any later poll whose window still holds the run retries it.
+        gh.skipped.append(f"{repo} run {latest['id']} attempt {a}")
+        print(f"[warn] skipped {gh.skipped[-1]}: {err}", file=sys.stderr)
+        return None
+
+
 def poll(
     gh: GitHub,
     client,
@@ -496,48 +510,64 @@ def poll(
     start: datetime,
     end: datetime,
     dry_run: bool = False,
+    workers: int = 1,
 ) -> tuple[int, int, str]:
     """Write every new or changed run attempt created in the window, oldest first.
 
     Returns (attempts, rows, stop reason or ''). A stop keeps every attempt completed so far,
-    so what is stored stays a prefix of the window.
+    so what is stored stays a prefix of the window. With workers > 1 attempts are fetched
+    concurrently but consumed in order, so a stop never leaves a hole.
     """
     known = (
         {}
         if client is None
         else stored(client, db or "", repo, start - timedelta(days=1))
     )
-    attempts = rows = 0
-    reason = ""
-    batch: list[dict[str, Any]] = []
-    try:
+
+    def todo() -> Iterator[tuple[Mapping[str, Any], int]]:
         for latest in gh.runs(repo, start, end):
             n = int(latest.get("run_attempt") or 1)
             for a in range(1, n + 1):
-                key = run_key(repo, latest["id"], a)
-                have = known.get(key)
-                run = latest if a == n else None
+                have = known.get(run_key(repo, latest["id"], a))
                 if (
                     have
                     and have[1] == "finished"
                     and (a < n or have[0] == _ts(latest.get("updated_at")))
                 ):
                     continue
-                try:
-                    run = run or gh.attempt(repo, latest["id"], a)
-                    jobs = gh.jobs(repo, latest["id"], a)
-                except Unavailable as err:
-                    # Not stored, so any later poll whose window still holds the run retries it.
-                    gh.skipped.append(f"{repo} run {latest['id']} attempt {a}")
-                    print(f"[warn] skipped {gh.skipped[-1]}: {err}", file=sys.stderr)
-                    continue
-                batch.append(workflow_row(repo, run, jobs))
-                batch += [r for r in (job_row(repo, run, j) for j in jobs) if r]
-                attempts += 1
+                yield latest, a
+
+    attempts = rows = 0
+    reason = ""
+    batch: list[dict[str, Any]] = []
+    pool = ThreadPoolExecutor(workers)
+    pending: deque = deque()
+    try:
+        work = todo()
+        while True:
+            while len(pending) < 2 * workers - 1 and (item := next(work, None)):
+                latest, a = item
+                last = a == int(latest.get("run_attempt") or 1)
+                pending.append(
+                    pool.submit(
+                        _fetch_attempt, gh, repo, latest, a, latest if last else None
+                    )
+                )
+            if not pending:
+                break
+            got = pending.popleft().result()
+            if got is None:
+                continue
+            run, jobs = got
+            batch.append(workflow_row(repo, run, jobs))
+            batch += [r for r in (job_row(repo, run, j) for j in jobs) if r]
+            attempts += 1
             if len(batch) >= 500:
                 rows += _flush(client, db, batch, dry_run)
     except Stop as stop:
         reason = str(stop)
+    finally:
+        pool.shutdown(cancel_futures=True)
     rows += _flush(client, db, batch, dry_run)
     return attempts, rows, reason
 
@@ -579,6 +609,12 @@ def main(argv=None) -> None:
     )
     p.add_argument(
         "--deadline-minutes", type=float, default=12.0, help="0 = no deadline"
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="attempts fetched concurrently; 1 = sequential",
     )
     p.add_argument(
         "--wait-for-reset",
@@ -629,7 +665,9 @@ def main(argv=None) -> None:
             + (" (watermark - overlap)" if resumed else ""),
             file=sys.stderr,
         )
-        attempts, rows, reason = poll(gh, client, db, repo, start, now, args.dry_run)
+        attempts, rows, reason = poll(
+            gh, client, db, repo, start, now, args.dry_run, args.workers
+        )
         print(
             f"[info] {repo}: {attempts} run attempt(s), {rows} row(s)", file=sys.stderr
         )

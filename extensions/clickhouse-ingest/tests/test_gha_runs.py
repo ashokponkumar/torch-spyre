@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import time
 import urllib.error
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -605,7 +606,7 @@ def _cli(monkeypatch, clock, runs, order, **api):
     monkeypatch.setattr(
         gha_runs, "GitHub", lambda token, **kw: FakeAPI(runs, clock=clock, **api, **kw)
     )
-    argv = ["poll", "--deadline-minutes", "12", "--dry-run"]
+    argv = ["poll", "--deadline-minutes", "12", "--workers", "1", "--dry-run"]
     try:
         gha_runs.main(argv + [a for repo in order for a in ("--repo", repo)])
     except SystemExit as stop:
@@ -789,3 +790,42 @@ def test_a_skipped_run_is_fetched_again_on_the_next_poll():
     gh.fail = False
     gha_runs.poll(gh, client, "db", REPO, start, end)
     assert any("/7#1" in r["run_key"] for r in client.inserted)
+
+
+class SlowGitHub(FakeGitHub):
+    """Earlier runs answer slowest, so a concurrent poll finishes them out of order."""
+
+    def __init__(self, runs, stop_at=None):
+        super().__init__(runs)
+        self.stop_at = stop_at
+
+    def jobs(self, repo, run_id, attempt):
+        if run_id == self.stop_at:
+            raise gha_runs.Stop("deadline reached")
+        time.sleep(0.002 * (20 - run_id % 20))
+        return super().jobs(repo, run_id, attempt)
+
+
+def _workflow_keys(client):
+    return [
+        r["run_key"] for r in client.inserted if r["pipeline_type"] == "gha-workflow"
+    ]
+
+
+def test_concurrent_workers_store_the_same_rows_in_order():
+    runs = [_run(id=100 + i) for i in range(12)]
+    seq, par = FakeClient(), FakeClient()
+    gha_runs.poll(SlowGitHub(runs), seq, "db", REPO, *_window())
+    out = gha_runs.poll(SlowGitHub(runs), par, "db", REPO, *_window(), workers=4)
+    assert out[0] == 12
+    assert _workflow_keys(par) == _workflow_keys(seq)
+
+
+def test_a_stop_with_concurrent_workers_leaves_a_prefix_not_a_hole():
+    runs = [_run(id=100 + i) for i in range(12)]
+    client = FakeClient()
+    _, _, reason = gha_runs.poll(
+        SlowGitHub(runs, stop_at=106), client, "db", REPO, *_window(), workers=4
+    )
+    assert reason == "deadline reached"
+    assert _workflow_keys(client) == [f"gha:{REPO}/{100 + i}#1" for i in range(6)]
