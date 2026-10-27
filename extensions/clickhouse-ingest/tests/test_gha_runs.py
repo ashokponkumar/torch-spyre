@@ -789,3 +789,38 @@ def test_a_skipped_run_is_fetched_again_on_the_next_poll():
     gh.fail = False
     gha_runs.poll(gh, client, "db", REPO, start, end)
     assert any("/7#1" in r["run_key"] for r in client.inserted)
+
+
+def test_a_dispatching_jenkins_run_in_the_title_is_stored_on_the_workflow_and_its_jobs():
+    run = _run(
+        event="workflow_dispatch",
+        display_title="integration-tests (unit) [jenkins: Spyre/component-build#51]",
+    )
+    assert (
+        gha_runs.workflow_row(REPO, run, [_job()])["props"]["parent_jenkins_run_key"]
+        == "Spyre/component-build#51"
+    )
+    assert (
+        gha_runs.job_row(REPO, run, _job())["props"]["parent_jenkins_run_key"]
+        == "Spyre/component-build#51"
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "integration-tests (unit)",
+        "",
+        None,
+        "[jenkins: ]",
+        "[jenkins: no-number]",
+        "[jenkins: a'; DROP#1x]",
+    ],
+)
+def test_a_title_without_a_well_formed_marker_stores_no_parent(title):
+    run = _run(event="workflow_dispatch", display_title=title)
+    assert (
+        "parent_jenkins_run_key"
+        not in gha_runs.workflow_row(REPO, run, [_job()])["props"]
+    )
+    assert "parent_jenkins_run_key" not in gha_runs.job_row(REPO, run, _job())["props"]

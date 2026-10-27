@@ -39,6 +39,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -162,6 +163,15 @@ def _outcome(
         row["failure_is_infra"] = True
 
 
+# A dispatching Jenkins run names itself in the workflow's run-name as "[jenkins: <JOB_NAME>#<BUILD_NUMBER>]".
+PARENT_MARK = re.compile(r"\[jenkins:\s*([\w .-]+(?:/[\w .-]+)*#\d+)\s*\]")
+
+
+def parent_props(run: Mapping[str, Any]) -> dict[str, str]:
+    m = PARENT_MARK.search(run.get("display_title") or "")
+    return {"parent_jenkins_run_key": m.group(1).strip()} if m else {}
+
+
 def run_key(repo: str, run_id: int, attempt: int) -> str:
     return f"gha:{repo}/{run_id}#{attempt}"
 
@@ -201,7 +211,8 @@ def workflow_row(
                 ("run_id", run.get("id")),
             )
             if v
-        },
+        }
+        | parent_props(run),
     )
     # A run has no completed_at; its updated_at is when it concluded.
     _outcome(
@@ -253,7 +264,8 @@ def job_row(
                 ("labels", ",".join(job.get("labels") or [])),
             )
             if v
-        },
+        }
+        | parent_props(run),
     )
     _outcome(row, job.get("status") or "", job.get("conclusion"), started, completed)
     failed_step = next(
