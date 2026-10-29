@@ -438,7 +438,7 @@ def write_tables(client, db, root, meta, aid, rid, props) -> dict:
         state = verdict.get("state") or ("failed" if failed else "passed")
         insert_artifact_result(
             client, db, artifact_id=aid, run_id=rid, test_type=test_type, state=state, arch=verdict.get("arch") or meta["arch"],
-            result_kind=verdict.get("result_kind", ""), duration_s=verdict.get("duration_s", 0.0),
+            result_kind=verdict.get("result_kind") or ("performance" if "benchmark_runs" in loaded else ""), duration_s=verdict.get("duration_s", 0.0),
             props={**verdict.get("props", {}), **{k: v for k, v in props.items() if v},
                    "run_url": meta.get("run_url") or props.get("bundle_url", "")},
         )  # fmt: skip

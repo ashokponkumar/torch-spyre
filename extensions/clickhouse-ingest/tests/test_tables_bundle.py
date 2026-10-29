@@ -165,6 +165,16 @@ def test_a_benchmark_row_can_key_itself_by_name_alone(tmp_path):
     assert ids[0] == ids[1]
 
 
+def test_a_quality_benchmark_bundle_records_a_performance_verdict(tmp_path):
+    root = _bundle(tmp_path, {"benchmark_runs": BENCH}, "quality")
+    c = DryRunClient()
+    bundle.write_tables(
+        c, "db", root, {**offline.check(root), "run_key": "k"}, AID, RID, {}
+    )
+    (verdict,) = c.rows[schema.ARTIFACT_RESULTS.name]
+    assert (verdict["result_kind"], verdict["test_type"]) == ("performance", "quality")
+
+
 def test_by_default_every_benchmark_prop_is_identity(tmp_path):
     plain = {"rows": [{k: v for k, v in BENCH["rows"][0].items() if k != "identity"}]}
     changed = {
