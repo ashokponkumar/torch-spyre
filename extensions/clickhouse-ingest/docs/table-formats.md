@@ -224,6 +224,7 @@ generated schema for reference only.
 | `artifact_result_reasons` | Derived from a failed verdict | Failure collectors |
 | `pipeline_runs`, `pipeline_run_links`, `ci_run_timings` | CI bookkeeping | Jenkins and GitHub Actions |
 | `artifact_subscriptions`, `dispatch_*`, `artifact_dispatches` | Subscriptions and dispatch | The dashboard's subscription editor |
+| `rbac_roles`, `rbac_bindings` | Access control | The dashboard's access admin |
 | `test_cases`, `benchmarks`, `capabilities` | Identity tables | Filled by the writers from the rows above |
 
 ## Schemas

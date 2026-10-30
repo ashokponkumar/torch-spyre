@@ -39,7 +39,7 @@ UPLOADABLE = {
 REFERENCE_ONLY = (
     "artifacts", "artifact_refs", "artifact_tags", "artifact_result_reasons", "pipeline_runs",
     "ci_run_timings", "artifact_subscriptions", "dispatch_requests", "artifact_dispatches",
-    "dispatch_targets", "pipeline_run_links",
+    "dispatch_targets", "pipeline_run_links", "rbac_roles", "rbac_bindings",
 )  # fmt: skip
 FILE_SUFFIX = ".json"
 # What a bundle's tests may call themselves; the DDL admits more for verdicts than a run uploads.

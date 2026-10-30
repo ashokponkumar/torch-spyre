@@ -236,6 +236,22 @@ def test_every_uploadable_table_has_a_generated_schema_and_the_rest_are_referenc
     )
 
 
+def test_every_table_is_classified_as_uploadable_reference_only_or_identity():
+    """A new table in schema.py must be placed on purpose: uploadable, reference-only, or an identity table."""
+    declared = {
+        c.name
+        for c in vars(schema).values()
+        if isinstance(c, type) and issubclass(c, schema.Table) and c.name
+    }
+    placed = (
+        set(tables.UPLOADABLE)
+        | set(tables.REFERENCE_ONLY)
+        | {"test_cases", "benchmarks", "capabilities"}
+    )
+    assert declared - placed == set(), "classify in tables.py and docs/table-formats.md"
+    assert placed - declared == set(), "names a table schema.py does not declare"
+
+
 def test_the_generated_enums_come_from_the_table_classes():
     sch = tables.json_schemas()
     status = sch["test_case_runs.upload"]["properties"]["rows"]["items"]["properties"][
