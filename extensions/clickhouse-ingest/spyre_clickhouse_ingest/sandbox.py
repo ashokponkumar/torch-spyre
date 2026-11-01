@@ -102,6 +102,7 @@ class Sandbox:
         ("artifact_subscriptions", "1", "subscription_id"),
         ("rbac_roles", "1", "role_id"),
         ("rbac_bindings", "1", "binding_id"),
+        ("optimize_hypotheses", "1", "hypothesis_id"),
         (
             "artifact_dispatches",
             "artifact_id GLOBAL IN (SELECT artifact_id FROM {db}.artifacts)",
